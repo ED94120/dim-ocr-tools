@@ -249,10 +249,6 @@ V1 : extraction champs clés + traçabilité. OCR limité à 10 pages.
 <script>
 "use strict";
 
-if (!window.pdfjsLib) { alert("PDF.js non chargé (CDN bloqué ou pas d'Internet)."); }
-if (!window.Tesseract) { alert("Tesseract.js non chargé (CDN bloqué ou pas d'Internet)."); }
-if (!window.proj4) { alert("Proj4 non chargé (CDN bloqué ou pas d'Internet)."); }
-
 
 /* =========================================================
    Helpers DOM / UI
@@ -985,6 +981,11 @@ $("selAll").addEventListener("click", () => selectBlock("blockExport"));
 });
 
 $("btnAnalyze").addEventListener("click", async () => {
+  if (!window.pdfjsLib || !window.Tesseract || !window.proj4) {
+    setStatus("Librairies OCR non chargées (CDN). Rechargez la page ou vérifiez le réseau.", "err");
+    return;
+  }
+
 setStatus("Bouton Analyser cliqué.", "ok");
 
   const f = $("pdfFile").files && $("pdfFile").files[0] ? $("pdfFile").files[0] : null;
