@@ -1,144 +1,1014 @@
+
 <!doctype html>
 <html lang="fr">
 <head>
-<meta charset="utf-8">
-<title>Extraction DIM – OCR autonome (V0)</title>
-<meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Extraction DIM (OCR autonome) - V1</title>
 
-<style>
-body{
-  font-family: Arial, sans-serif;
-  margin: 20px;
-  max-width: 1000px;
-}
-h1{
-  margin-bottom: 5px;
-}
-.small{
-  font-size: 13px;
-  color: #444;
-}
-.controls{
-  margin: 15px 0;
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  align-items: center;
-}
-button{
-  padding: 8px 14px;
-  cursor: pointer;
-}
-input[type="number"]{
-  width: 70px;
-}
-#status{
-  margin: 10px 0;
-  font-weight: bold;
-}
-textarea{
-  width: 100%;
-  height: 300px;
-  font-family: Consolas, monospace;
-  font-size: 13px;
-}
-canvas{
-  border: 1px solid #ccc;
-  margin-top: 10px;
-  max-width: 100%;
-}
-</style>
+  <style>
+    body{font-family:Arial, sans-serif; margin:20px; max-width:1100px}
+    h2{margin:0 0 6px 0}
+    .small{font-size:12px; color:#444}
+    .card{border:1px solid #ddd; border-radius:10px; padding:14px; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,0.04)}
+    .cardHeader{display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap}
+    .cardTitle{font-weight:bold; font-size:16px}
+    .controls{display:flex; gap:10px; flex-wrap:wrap; align-items:center}
+    label{font-weight:bold}
+    input[type="file"]{padding:6px}
+    input[type="number"]{width:90px; padding:6px}
+    button{padding:10px 14px; cursor:pointer}
+    button:disabled{opacity:0.5; cursor:not-allowed}
+    .status{margin-top:10px; font-weight:bold}
+    .ok{color:#1b5e20}
+    .err{color:#b00020}
+    .muted{color:#666; font-size:12px}
+    .spacer{height:10px}
+    .tools{display:flex; gap:10px; flex-wrap:wrap; align-items:center}
+    .grid{display:grid; grid-template-columns: 220px 1fr 110px; gap:10px; align-items:center; margin-top:10px}
+    .fieldLabel{font-weight:bold}
+    .fieldVal{width:100%; padding:8px; box-sizing:border-box}
+    .btnCopy{padding:8px 10px}
+    .btnSel{padding:8px 10px}
+    details{margin-top:10px}
+    summary{cursor:pointer; font-weight:bold}
+    .mono{font-family:Consolas, monospace; font-size:12px; white-space:pre-wrap}
+    .pill{display:inline-block; padding:4px 10px; border-radius:999px; font-size:12px; font-weight:bold}
+    .pillOk{background:#e7f4ea; color:#1b5e20; border:1px solid #b8e0c1}
+    .pillWarn{background:#fff4e5; color:#8a4b00; border:1px solid #ffd29a}
+    .pillBad{background:#fde8ea; color:#b00020; border:1px solid #f5b3bb}
+  </style>
+
+  <!-- PDF.js (render pages) -->
+  <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.js"></script>
+
+  <!-- Tesseract.js (OCR local) -->
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.5/dist/tesseract.min.js"></script>
+
+  <!-- Proj4js (Lambert II étendu -> WGS84) -->
+  <script src="https://cdn.jsdelivr.net/npm/proj4@2.11.0/dist/proj4.js"></script>
 </head>
 
 <body>
+  <h2>Extraction DIM (OCR autonome) - V1</h2>
+  <div class="small">
+    Déposez un PDF DIM (même scanné). L’OCR est limité à 10 pages. Les champs extraits sont regroupés par blocs, avec un bouton « Copier » pour chaque valeur.
+  </div>
 
-<h1>Extraction DIM – OCR autonome (V0)</h1>
-<p class="small">
-OCR 100 % navigateur. PDF scanné accepté.  
-Les données ne quittent pas votre ordinateur.
-</p>
+  <div class="card" style="margin-top:14px;">
+    <div class="cardHeader">
+      <div class="cardTitle">Entrée PDF</div>
+      <div class="controls">
+        <label for="pdfFile">PDF DIM</label>
+        <input id="pdfFile" type="file" accept="application/pdf" />
+        <label for="maxPages">Pages max</label>
+        <input id="maxPages" type="number" min="1" max="10" value="10" />
+        <button id="btnAnalyze" type="button">Analyser</button>
+        <button id="btnClear" type="button">Effacer</button>
+      </div>
+    </div>
+    <div id="status" class="status muted">Prêt.</div>
+    <div id="progress" class="muted"></div>
+  </div>
 
-<div class="controls">
-  <input type="file" id="pdfInput" accept="application/pdf">
-  Pages max :
-  <input type="number" id="maxPages" value="3" min="1" max="10">
-  <button id="btnStart">Analyser</button>
-</div>
+  <div class="spacer"></div>
 
-<div id="status"></div>
+  <!-- Bloc 1 : Document -->
+  <div class="card">
+    <div class="cardHeader">
+      <div class="cardTitle">Bloc 1 - Document DIM</div>
+      <div class="tools">
+        <button id="selDoc" class="btnSel" type="button">Sélectionner le bloc</button>
+      </div>
+    </div>
 
-<canvas id="canvas"></canvas>
+    <div class="grid" id="blockDoc">
+      <div class="fieldLabel">Opérateur</div>
+      <input id="doc_operator" class="fieldVal" readonly />
+      <button id="copy_doc_operator" class="btnCopy" type="button">Copier</button>
 
-<h3>Texte OCR brut</h3>
-<textarea id="ocrText" placeholder="Le texte OCR apparaîtra ici..."></textarea>
+      <div class="fieldLabel">Date du document</div>
+      <input id="doc_date" class="fieldVal" readonly />
+      <button id="copy_doc_date" class="btnCopy" type="button">Copier</button>
 
-<!-- PDF.js -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+      <div class="fieldLabel">Référence du site</div>
+      <input id="doc_siteRef" class="fieldVal" readonly />
+      <button id="copy_doc_siteRef" class="btnCopy" type="button">Copier</button>
+    </div>
 
-<!-- Tesseract.js -->
-<script src="https://unpkg.com/tesseract.js@5.0.5/dist/tesseract.min.js"></script>
+    <details>
+      <summary>Traçabilité (pages et extraits OCR)</summary>
+      <div class="mono" id="traceDoc"></div>
+    </details>
+  </div>
+
+  <div class="spacer"></div>
+
+  <!-- Bloc 2 : Localisation -->
+  <div class="card">
+    <div class="cardHeader">
+      <div class="cardTitle">Bloc 2 - Localisation du site</div>
+      <div class="tools">
+        <button id="selLoc" class="btnSel" type="button">Sélectionner le bloc</button>
+        <button id="btnOpenCarto" type="button">Ouvrir Cartoradio</button>
+      </div>
+    </div>
+
+    <div class="grid" id="blockLoc">
+      <div class="fieldLabel">Adresse (format Cartoradio)</div>
+      <input id="loc_addrCarto" class="fieldVal" readonly />
+      <button id="copy_loc_addrCarto" class="btnCopy" type="button">Copier</button>
+
+      <div class="fieldLabel">Commune</div>
+      <input id="loc_city" class="fieldVal" readonly />
+      <button id="copy_loc_city" class="btnCopy" type="button">Copier</button>
+
+      <div class="fieldLabel">Département</div>
+      <input id="loc_dept" class="fieldVal" readonly />
+      <button id="copy_loc_dept" class="btnCopy" type="button">Copier</button>
+
+      <div class="fieldLabel">Région</div>
+      <input id="loc_region" class="fieldVal" readonly />
+      <button id="copy_loc_region" class="btnCopy" type="button">Copier</button>
+    </div>
+
+    <details>
+      <summary>Traçabilité (pages et extraits OCR)</summary>
+      <div class="mono" id="traceLoc"></div>
+    </details>
+  </div>
+
+  <div class="spacer"></div>
+
+  <!-- Bloc 3 : Coordonnées -->
+  <div class="card">
+    <div class="cardHeader">
+      <div class="cardTitle">Bloc 3 - Coordonnées</div>
+      <div class="tools">
+        <button id="selCoord" class="btnSel" type="button">Sélectionner le bloc</button>
+        <span id="coordPill" class="pill pillWarn" style="display:none;"></span>
+      </div>
+    </div>
+
+    <div class="grid" id="blockCoord">
+      <div class="fieldLabel">X Lambert II étendu (m)</div>
+      <input id="coord_x" class="fieldVal" readonly />
+      <button id="copy_coord_x" class="btnCopy" type="button">Copier</button>
+
+      <div class="fieldLabel">Y Lambert II étendu (m)</div>
+      <input id="coord_y" class="fieldVal" readonly />
+      <button id="copy_coord_y" class="btnCopy" type="button">Copier</button>
+
+      <div class="fieldLabel">Latitude WGS84 (deg)</div>
+      <input id="coord_lat" class="fieldVal" readonly />
+      <button id="copy_coord_lat" class="btnCopy" type="button">Copier</button>
+
+      <div class="fieldLabel">Longitude WGS84 (deg)</div>
+      <input id="coord_lon" class="fieldVal" readonly />
+      <button id="copy_coord_lon" class="btnCopy" type="button">Copier</button>
+
+      <div class="fieldLabel">Copie lat, lon</div>
+      <input id="coord_latlon" class="fieldVal" readonly />
+      <button id="copy_coord_latlon" class="btnCopy" type="button">Copier</button>
+
+      <div class="fieldLabel">Copie lon,lat (KML)</div>
+      <input id="coord_lonlat" class="fieldVal" readonly />
+      <button id="copy_coord_lonlat" class="btnCopy" type="button">Copier</button>
+
+      <div class="fieldLabel">Source lat/lon</div>
+      <input id="coord_src" class="fieldVal" readonly />
+      <button id="copy_coord_src" class="btnCopy" type="button">Copier</button>
+
+      <div class="fieldLabel">Écart DIM / calcul (m)</div>
+      <input id="coord_delta" class="fieldVal" readonly />
+      <button id="copy_coord_delta" class="btnCopy" type="button">Copier</button>
+    </div>
+
+    <details>
+      <summary>Traçabilité (pages et extraits OCR)</summary>
+      <div class="mono" id="traceCoord"></div>
+    </details>
+  </div>
+
+  <div class="spacer"></div>
+
+  <!-- Bloc 4 : Antennes -->
+  <div class="card">
+    <div class="cardHeader">
+      <div class="cardTitle">Bloc 4 - Antennes</div>
+      <div class="tools">
+        <button id="selAnt" class="btnSel" type="button">Sélectionner le bloc</button>
+      </div>
+    </div>
+
+    <div class="grid" id="blockAnt">
+      <div class="fieldLabel">Azimuts (format lisible)</div>
+      <input id="ant_az_pretty" class="fieldVal" readonly />
+      <button id="copy_ant_az_pretty" class="btnCopy" type="button">Copier</button>
+
+      <div class="fieldLabel">Azimuts (CSV ;)</div>
+      <input id="ant_az_csv" class="fieldVal" readonly />
+      <button id="copy_ant_az_csv" class="btnCopy" type="button">Copier</button>
+    </div>
+
+    <details>
+      <summary>Traçabilité (pages et extraits OCR)</summary>
+      <div class="mono" id="traceAnt"></div>
+    </details>
+  </div>
+
+  <div class="spacer"></div>
+
+  <!-- Bloc 5 : Export -->
+  <div class="card">
+    <div class="cardHeader">
+      <div class="cardTitle">Bloc 5 - Export global</div>
+      <div class="tools">
+        <button id="selAll" class="btnSel" type="button">Sélectionner le résumé</button>
+      </div>
+    </div>
+
+    <div class="grid" id="blockExport">
+      <div class="fieldLabel">Résumé global</div>
+      <input id="export_summary" class="fieldVal" readonly />
+      <button id="copy_export_summary" class="btnCopy" type="button">Copier</button>
+
+      <div class="fieldLabel">Export JSON (texte)</div>
+      <input id="export_json" class="fieldVal" readonly />
+      <button id="copy_export_json" class="btnCopy" type="button">Copier</button>
+    </div>
+
+    <details>
+      <summary>Notes</summary>
+      <div class="mono muted">
+V1 : extraction champs clés + traçabilité. OCR limité à 10 pages.
+      </div>
+    </details>
+  </div>
 
 <script>
-const statusEl = document.getElementById("status");
-const canvas = document.getElementById("canvas");
-const ctx = canvas.getContext("2d");
-const ocrText = document.getElementById("ocrText");
+"use strict";
 
-pdfjsLib.GlobalWorkerOptions.workerSrc =
-  "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+if (!window.pdfjsLib) { alert("PDF.js non chargé (CDN bloqué ou pas d'Internet)."); }
+if (!window.Tesseract) { alert("Tesseract.js non chargé (CDN bloqué ou pas d'Internet)."); }
+if (!window.proj4) { alert("Proj4 non chargé (CDN bloqué ou pas d'Internet)."); }
 
-function setStatus(msg){
-  statusEl.textContent = msg;
+
+/* =========================================================
+   Helpers DOM / UI
+   ========================================================= */
+const $ = (id) => document.getElementById(id);
+
+function setStatus(msg, kind){
+  const el = $("status");
+  el.className = "status " + (kind === "ok" ? "ok" : (kind === "err" ? "err" : "muted"));
+  el.textContent = msg || "";
 }
 
-async function runOCR(){
-  const fileInput = document.getElementById("pdfInput");
-  const maxPages = parseInt(document.getElementById("maxPages").value, 10);
+function setProgress(msg){ $("progress").textContent = msg || ""; }
 
-  if(!fileInput.files.length){
-    alert("Veuillez sélectionner un PDF.");
-    return;
+function setVal(id, v){
+  const el = $(id);
+  if (!el) return;
+  el.value = (v == null) ? "" : String(v);
+}
+function setText(id, v){
+  const el = $(id);
+  if (!el) return;
+  el.textContent = (v == null) ? "" : String(v);
+}
+
+function clearAllFields(){
+  [
+    "doc_operator","doc_date","doc_siteRef",
+    "loc_addrCarto","loc_city","loc_dept","loc_region",
+    "coord_x","coord_y","coord_lat","coord_lon","coord_latlon","coord_lonlat","coord_src","coord_delta",
+    "ant_az_pretty","ant_az_csv",
+    "export_summary","export_json"
+  ].forEach(id => setVal(id, ""));
+
+  ["traceDoc","traceLoc","traceCoord","traceAnt"].forEach(id => setText(id, ""));
+
+  $("coordPill").style.display = "none";
+  $("coordPill").className = "pill pillWarn";
+  $("coordPill").textContent = "";
+
+  setProgress("");
+  setStatus("Prêt.", "ok");
+}
+
+function selectBlock(blockId){
+  const el = $(blockId);
+  if (!el) return;
+
+  const text = el.innerText || "";
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.position = "fixed";
+  ta.style.left = "-9999px";
+  ta.style.top = "-9999px";
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  ta.setSelectionRange(0, ta.value.length);
+  document.body.removeChild(ta);
+
+  setStatus("Bloc sélectionné. Faites Ctrl+C.", "ok");
+}
+
+/* =========================================================
+   Clipboard: copie robuste
+   ========================================================= */
+async function copyTextRobust(text, selectFallbackEl){
+  const t = (text || "").toString();
+  if (!t.trim()) return { ok:false, mode:"empty" };
+
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText && window.isSecureContext) {
+      await navigator.clipboard.writeText(t);
+      return { ok:true, mode:"clipboard" };
+    }
+  } catch(e){}
+
+  if (selectFallbackEl) {
+    selectFallbackEl.focus({preventScroll:true});
+    selectFallbackEl.select();
+    selectFallbackEl.setSelectionRange(0, selectFallbackEl.value.length);
+    return { ok:false, mode:"select" };
   }
 
-  ocrText.value = "";
-  setStatus("Chargement du PDF...");
+  return { ok:false, mode:"fail" };
+}
 
-  const file = fileInput.files[0];
-  const arrayBuffer = await file.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+async function copyFieldValue(inputId){
+  const el = $(inputId);
+  const v = el ? (el.value || "") : "";
+  const r = await copyTextRobust(v, el);
+  if (r.ok) setStatus("Copié.", "ok");
+  else if (r.mode === "select") setStatus("Copie automatique refusée. Valeur sélectionnée : faites Ctrl+C.", "err");
+  else setStatus("Rien à copier.", "err");
+}
 
-  const totalPages = Math.min(pdf.numPages, maxPages);
-  setStatus("PDF chargé. Pages analysées : " + totalPages);
+/* =========================================================
+   PDF.js configuration
+   ========================================================= */
+pdfjsLib.GlobalWorkerOptions.workerSrc =
+  "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.js";
 
-  const worker = await Tesseract.createWorker("fra");
+/* =========================================================
+   Projections : Lambert II étendu (EPSG:27572) -> WGS84 (EPSG:4326)
+   ========================================================= */
+proj4.defs("EPSG:27572",
+  "+proj=lcc +lat_1=46.8 +lat_2=45.89891888888889 +lat_0=46.8 " +
+  "+lon_0=0 +x_0=600000 +y_0=2200000 +a=6378249.2 +b=6356515 " +
+  "+towgs84=-168,-60,320,0,0,0,0 +units=m +no_defs"
+);
 
-  for(let pageNum = 1; pageNum <= totalPages; pageNum++){
-    setStatus("OCR page " + pageNum + " / " + totalPages);
+/* =========================================================
+   OCR + parsing
+   ========================================================= */
 
-    const page = await pdf.getPage(pageNum);
-    const viewport = page.getViewport({ scale: 2.0 });
+function normSpaces(s){ return (s || "").toString().replace(/\s+/g, " ").trim(); }
 
-    canvas.width = viewport.width;
-    canvas.height = viewport.height;
+function normalizeOcrText(s){
+  let t = (s || "").toString();
 
-    await page.render({
-      canvasContext: ctx,
-      viewport: viewport
-    }).promise;
+  // uniformiser espaces
+  t = t.replace(/\r/g, "\n");
+  t = t.replace(/[ \t]+/g, " ");
+  t = t.replace(/\n{3,}/g, "\n\n");
 
+  // symboles degré
+  t = t.replace(/º/g, "°");
+
+  // OCR fréquents: 0/O dans les nombres -> correction prudente
+  // remplace O par 0 seulement dans des tokens très numériques
+  t = t.replace(/([0-9])O(?=[0-9])/g, "$10");
+  t = t.replace(/O(?=[0-9])/g, "0");
+
+  return t;
+}
+
+function findFirstRegex(pages, re){
+  for (const p of pages) {
+    const m = p.text.match(re);
+    if (m) return { page:p.page, match:m };
+  }
+  return null;
+}
+
+function findAllRegex(pages, re){
+  const out = [];
+  for (const p of pages) {
+    let m;
+    const r = new RegExp(re.source, re.flags.includes("g") ? re.flags : (re.flags + "g"));
+    while ((m = r.exec(p.text)) !== null) {
+      out.push({ page:p.page, match:m });
+      if (m.index === r.lastIndex) r.lastIndex++;
+    }
+  }
+  return out;
+}
+
+function extractOperator(pages){
+  const hit = findFirstRegex(
+    pages,
+    /^#\s*op[ée]rateur\s*:\s*(.+)$/im
+  );
+  if (hit) {
+    return {
+      value: hit.match[1].trim().toUpperCase(),
+      page: hit.page,
+      snippet: hit.match[0]
+    };
+  }
+  return { value:"", page:null, snippet:"" };
+}
+
+
+function extractDate(pages){
+
+  // PRIORITÉ DIM : ligne normalisée "# DATE : ..."
+  const hit0 = findFirstRegex(
+    pages,
+    /^#\s*date\s*:\s*(\d{2}\/\d{2}\/\d{4})/im
+  );
+  if (hit0) {
+    return {
+      value: hit0.match[1],
+      page: hit0.page,
+      snippet: hit0.match[0]
+    };
+  }
+
+  // fallback : "DATE :" générique
+  const hit1 = findFirstRegex(
+    pages,
+    /(?:\bdate\b\s*[:\-]?\s*)(\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4})/i
+  );
+  if (hit1) {
+    return { value: hit1.match[1], page: hit1.page, snippet: hit1.match[0] };
+  }
+
+  // dernier recours : première date trouvée
+  const hit2 = findFirstRegex(
+    pages,
+    /(\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4})/
+  );
+  if (hit2) {
+    return { value: hit2.match[1], page: hit2.page, snippet: hit2.match[0] };
+  }
+
+  return { value:"", page:null, snippet:"" };
+}
+
+
+function extractSiteRef(pages){
+const hit0 = findFirstRegex(
+  pages,
+  /^#\s*code\s*site\s*:\s*([0-9]{5}[_\s][0-9]{3}[_\s][0-9]{2})/im
+);
+if (hit0) {
+  return {
+    value: hit0.match[1].replace(/\s+/g, "_"),
+    page: hit0.page,
+    snippet: hit0.match[0]
+  };
+}
+
+
+  // format fréquent: 59316_002_01
+  const hitA = findFirstRegex(pages, /\b\d{5}_\d{3}_\d{2}\b/);
+  if (hitA) return { value: hitA.match[0], page: hitA.page, snippet: hitA.match[0] };
+
+  // "CODE SITE : ...."
+  const hitB = findFirstRegex(pages, /(?:code\s*(?:du\s*)?site|site\s*code|id\s*site)\s*[:\-]?\s*([A-Z0-9_]{6,})/i);
+  if (hitB) return { value: hitB.match[1], page: hitB.page, snippet: hitB.match[0] };
+
+  // "NOM DU SITE : ..."
+  const hitC = findFirstRegex(pages, /(?:nom\s*du\s*site)\s*[:\-]?\s*([A-Z0-9_]{6,})/i);
+  if (hitC) return { value: hitC.match[1], page: hitC.page, snippet: hitC.match[0] };
+
+  return { value:"", page:null, snippet:"" };
+}
+
+function extractAddressLine(pages){
+  const hit0 = findFirstRegex(
+  pages,
+  /^#\s*adresse\s*du\s*site\s*:\s*(.+)$/im
+);
+if (hit0) {
+  return {
+    value: normSpaces(hit0.match[1]),
+    page: hit0.page,
+    snippet: hit0.match[0]
+  };
+}
+
+  // "ADRESSE : ...."
+  const hit = findFirstRegex(pages, /(?:adresse\s*(?:du\s*site)?\s*[:\-])\s*([^\n]{10,})/i);
+  if (hit) return { value: normSpaces(hit.match[1]), page: hit.page, snippet: hit.match[0] };
+
+  // fallback: ligne contenant CP + commune (France)
+  const hit2 = findFirstRegex(pages, /([0-9]{1,4}\s+[^\n]{3,}\s+\b\d{5}\b\s+[A-ZÀ-ÖØ-Ýa-zà-öø-ÿ'\- ]{3,})/);
+  if (hit2) return { value: normSpaces(hit2.match[1]), page: hit2.page, snippet: hit2.match[0] };
+
+  return { value:"", page:null, snippet:"" };
+}
+
+function extractCommune(pages){
+  const hit = findFirstRegex(
+    pages,
+    /^#\s*commune\s*:\s*(.+)$/im
+  );
+  if (hit) {
+    return {
+      value: normSpaces(hit.match[1]),
+      page: hit.page,
+      snippet: hit.match[0]
+    };
+  }
+  return { value:"", page:null, snippet:"" };
+}
+
+
+function parseNumberLoose(s){
+  if (!s) return NaN;
+  let t = s.toString();
+  t = t.replace(/\s+/g, "");
+  t = t.replace(",", ".");
+  // garder digits + dot + minus
+  t = t.replace(/[^0-9.\-]/g, "");
+  const n = Number(t);
+  return Number.isFinite(n) ? n : NaN;
+}
+
+function extractLambertXY(pages){
+  // tolère "X = 647025" etc
+  const hitX = findFirstRegex(pages, /\bX\b\s*[:=]\s*([0-9O][0-9O\s]{4,})/i);
+  const hitY = findFirstRegex(pages, /\bY\b\s*[:=]\s*([0-9O][0-9O\s]{4,})/i);
+
+  const x = hitX ? parseNumberLoose(hitX.match[1].replace(/O/g,"0")) : NaN;
+  const y = hitY ? parseNumberLoose(hitY.match[1].replace(/O/g,"0")) : NaN;
+
+  // plausibilité L2E
+  const okX = Number.isFinite(x) && x > 0 && x < 1300000;
+  const okY = Number.isFinite(y) && y > 1500000 && y < 3000000;
+
+  return {
+    x: okX ? x : NaN,
+    y: okY ? y : NaN,
+    pageX: hitX ? hitX.page : null,
+    pageY: hitY ? hitY.page : null,
+    snipX: hitX ? hitX.match[0] : "",
+    snipY: hitY ? hitY.match[0] : "",
+    rawX: hitX ? hitX.match[1] : "",
+    rawY: hitY ? hitY.match[1] : ""
+  };
+}
+
+function extractLatLonWGS(pages){
+  // tolère virgule ou point, "Latitude : 50.57"
+  const hitLat = findFirstRegex(pages, /(?:latitude)\s*[:=]\s*([0-9]{1,2}[.,][0-9]{3,})/i);
+  const hitLon = findFirstRegex(pages, /(?:longitude)\s*[:=]\s*([0-9]{1,3}[.,][0-9]{3,})/i);
+
+  const lat = hitLat ? parseNumberLoose(hitLat.match[1]) : NaN;
+  const lon = hitLon ? parseNumberLoose(hitLon.match[1]) : NaN;
+
+  const okLat = Number.isFinite(lat) && lat > 40 && lat < 52;
+  const okLon = Number.isFinite(lon) && lon > -6 && lon < 10;
+
+  return {
+    lat: okLat ? lat : NaN,
+    lon: okLon ? lon : NaN,
+    pageLat: hitLat ? hitLat.page : null,
+    pageLon: hitLon ? hitLon.page : null,
+    snipLat: hitLat ? hitLat.match[0] : "",
+    snipLon: hitLon ? hitLon.match[0] : ""
+  };
+}
+
+function lambertToWgs84(x, y){
+  // proj4 renvoie [lon,lat]
+  const out = proj4("EPSG:27572", "EPSG:4326", [x, y]);
+  return { lon: out[0], lat: out[1] };
+}
+
+function haversineMeters(lat1, lon1, lat2, lon2){
+  const R = 6371000.0;
+  const toRad = d => d * Math.PI / 180.0;
+  const p1 = toRad(lat1), p2 = toRad(lat2);
+  const dp = toRad(lat2 - lat1);
+  const dl = toRad(lon2 - lon1);
+  const a = Math.sin(dp/2)**2 + Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;
+  return 2*R*Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+function extractAzimuts(pages){
+  // chercher toutes les lignes contenant "azimut"
+  const hits = findAllRegex(pages, /(?:azimut|azimuts|orientation)\s*[:\-]?\s*([0-9° \/\-;,]{1,50})/ig);
+
+  // aussi chercher dans tableaux: nombres suivis de ° dans un voisinage
+  const hitsDeg = findAllRegex(pages, /([0-9]{1,3})\s*°/g);
+
+  const nums = [];
+
+  for (const h of hits) {
+    const s = h.match[1] || "";
+    const m = s.match(/[0-9]{1,3}/g);
+    if (m) m.forEach(v => nums.push({ v:Number(v), page:h.page, snip:h.match[0] }));
+  }
+  for (const h of hitsDeg) {
+    nums.push({ v:Number(h.match[1]), page:h.page, snip:h.match[0] });
+  }
+
+  // filtre 0..359
+  const vals = nums.filter(o => Number.isFinite(o.v) && o.v >= 0 && o.v <= 359);
+
+  // dédup + tri
+  const uniq = [];
+  for (const o of vals) {
+    if (!uniq.some(u => u.v === o.v)) uniq.push(o);
+  }
+  uniq.sort((a,b) => a.v - b.v);
+
+  // trace: garder jusqu’à 5 extraits
+  const trace = uniq.slice(0, 5).map(o => `p.${o.page}: ${o.snip}`).join("\n");
+
+  return {
+    list: uniq.map(o => o.v),
+    trace: trace
+  };
+}
+
+/* =========================================================
+   BAN (France) : compléter localisation à partir de lat/lon ou adresse
+   ========================================================= */
+async function banReverse(lat, lon){
+  const url = "https://api-adresse.data.gouv.fr/reverse/?" +
+              "lat=" + encodeURIComponent(lat) +
+              "&lon=" + encodeURIComponent(lon) +
+              "&limit=1";
+  const r = await fetch(url, { headers: { "Accept":"application/json" } });
+  if (!r.ok) throw new Error("BAN reverse HTTP " + r.status);
+  return await r.json();
+}
+
+async function banSearch(address){
+  const url = "https://api-adresse.data.gouv.fr/search/?" +
+              "q=" + encodeURIComponent(address) +
+              "&limit=1";
+  const r = await fetch(url, { headers: { "Accept":"application/json" } });
+  if (!r.ok) throw new Error("BAN search HTTP " + r.status);
+  return await r.json();
+}
+
+function parseContextDeptRegion(contextStr){
+  // ex: "59, Nord, Hauts-de-France"
+  const parts = (contextStr || "").toString().split(",").map(s => s.trim()).filter(Boolean);
+  const dept = parts[1] ? parts[1] : (parts[0] ? parts[0] : "");
+  const region = parts[2] ? parts[2] : "";
+  return { dept, region };
+}
+
+function buildCartoradioAddressFromBAN(props){
+  const num = props.housenumber || "";
+  const street = props.street || props.name || "";
+  const cp = props.postcode || "";
+  const city = props.city || "";
+  return normSpaces((num ? (num + " ") : "") + street + (cp ? (" " + cp) : "") + (city ? (" " + city) : ""));
+}
+
+/* =========================================================
+   OCR execution
+   ========================================================= */
+async function renderPdfPageToCanvas(pdf, pageNumber, scale){
+  const page = await pdf.getPage(pageNumber);
+  const viewport = page.getViewport({ scale });
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  canvas.width = Math.floor(viewport.width);
+  canvas.height = Math.floor(viewport.height);
+
+  await page.render({ canvasContext: ctx, viewport }).promise;
+  return canvas;
+}
+
+async function runOcrOnPdf(arrayBuffer, maxPages){
+  const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+  const pdf = await loadingTask.promise;
+
+  const total = Math.min(pdf.numPages, Math.max(1, Math.min(10, maxPages)));
+  setProgress("PDF chargé : " + pdf.numPages + " page(s). OCR sur " + total + " page(s).");
+
+  const worker = await Tesseract.createWorker({
+    logger: (m) => {
+      if (m && m.status) {
+        // exemple: recognizing text
+        if (m.status === "recognizing text" && typeof m.progress === "number") {
+          // affiché plus bas avec page, ici rien
+        }
+      }
+    }
+  });
+
+  await worker.loadLanguage("fra");
+  await worker.initialize("fra");
+
+  const pages = [];
+  for (let i = 1; i <= total; i++) {
+    setStatus("OCR en cours...", "ok");
+    setProgress("Page " + i + " / " + total + " : rendu + OCR...");
+
+    // scale : compromis vitesse/qualité
+    const canvas = await renderPdfPageToCanvas(pdf, i, 2.0);
+
+    // OCR
     const { data } = await worker.recognize(canvas);
-    ocrText.value +=
-      "\n\n===== PAGE " + pageNum + " =====\n\n" +
-      data.text;
+    const text = normalizeOcrText(data && data.text ? data.text : "");
+    pages.push({ page:i, text:text });
+
+    // libérer
+    canvas.width = 1;
+    canvas.height = 1;
   }
 
   await worker.terminate();
-  setStatus("OCR terminé.");
+  setProgress("OCR terminé sur " + total + " page(s).");
+  return pages;
 }
 
-document.getElementById("btnStart").addEventListener("click", runOCR);
-</script>
+/* =========================================================
+   Parsing global -> remplir UI
+   ========================================================= */
+function pillCoord(kind, msg){
+  const el = $("coordPill");
+  el.style.display = "inline-block";
+  el.className = "pill " + (kind === "ok" ? "pillOk" : (kind === "bad" ? "pillBad" : "pillWarn"));
+  el.textContent = msg;
+}
 
+function buildSummary(data){
+  const lines = [];
+  lines.push("Opérateur: " + (data.operator || ""));
+  lines.push("Date: " + (data.date || ""));
+  lines.push("Référence site: " + (data.siteRef || ""));
+  lines.push("Adresse Cartoradio: " + (data.addrCarto || ""));
+  lines.push("Commune: " + (data.city || ""));
+  lines.push("Département: " + (data.dept || ""));
+  lines.push("Région: " + (data.region || ""));
+  lines.push("X (L2 étendu): " + (data.x || ""));
+  lines.push("Y (L2 étendu): " + (data.y || ""));
+  lines.push("Latitude: " + (data.lat || ""));
+  lines.push("Longitude: " + (data.lon || ""));
+  lines.push("Azimuts: " + (data.azPretty || ""));
+  return lines.join(" | ");
+}
+
+async function fillLocationFromBAN(data){
+  // priorité: lat/lon -> reverse
+  try {
+    if (Number.isFinite(data.latNum) && Number.isFinite(data.lonNum)) {
+      const j = await banReverse(data.latNum, data.lonNum);
+      const feat = j.features && j.features[0];
+      if (feat && feat.properties) {
+        const props = feat.properties;
+        data.addrCarto = buildCartoradioAddressFromBAN(props) || data.addrCarto;
+        data.city = props.city || data.city;
+        const ctx = parseContextDeptRegion(props.context || "");
+        data.dept = ctx.dept || data.dept;
+        data.region = ctx.region || data.region;
+        return;
+      }
+    }
+  } catch(e){}
+
+  // sinon: adresse -> search
+  try {
+    if (data.addrLine) {
+      const j = await banSearch(data.addrLine);
+      const feat = j.features && j.features[0];
+      if (feat && feat.properties) {
+        const props = feat.properties;
+        data.addrCarto = buildCartoradioAddressFromBAN(props) || data.addrCarto;
+        data.city = props.city || data.city;
+        const ctx = parseContextDeptRegion(props.context || "");
+        data.dept = ctx.dept || data.dept;
+        data.region = ctx.region || data.region;
+        return;
+      }
+    }
+  } catch(e){}
+}
+
+function formatDec(n, dec){
+  if (!Number.isFinite(n)) return "";
+  return n.toFixed(dec);
+}
+
+async function parseAndFill(pages){
+
+  // 1) extraction champs
+  const op = extractOperator(pages);
+  const dt = extractDate(pages);
+  const sr = extractSiteRef(pages);
+  const adr = extractAddressLine(pages);
+  const xy = extractLambertXY(pages);
+  const ll = extractLatLonWGS(pages);
+  const az = extractAzimuts(pages);
+  const com = extractCommune(pages);
+
+
+  // 2) coord computation
+  let latFromLam = NaN, lonFromLam = NaN;
+  let latSrc = "";
+  let deltaM = "";
+
+  // Lambert -> WGS
+  if (Number.isFinite(xy.x) && Number.isFinite(xy.y)) {
+    try {
+      const w = lambertToWgs84(xy.x, xy.y);
+      lonFromLam = w.lon;
+      latFromLam = w.lat;
+    } catch(e){}
+  }
+
+  // choisir source lat/lon
+  let latNum = NaN, lonNum = NaN;
+  if (Number.isFinite(ll.lat) && Number.isFinite(ll.lon)) {
+    latNum = ll.lat;
+    lonNum = ll.lon;
+    latSrc = "Fournies par le DIM";
+    // si aussi Lambert, comparer
+    if (Number.isFinite(latFromLam) && Number.isFinite(lonFromLam)) {
+      const d = haversineMeters(latNum, lonNum, latFromLam, lonFromLam);
+      deltaM = Math.round(d).toString();
+      if (d < 15) pillCoord("ok", "Coordonnées cohérentes (écart " + deltaM + " m)");
+      else if (d <= 50) pillCoord("warn", "Coordonnées à vérifier (écart " + deltaM + " m)");
+      else pillCoord("bad", "Incohérence probable (écart " + deltaM + " m)");
+    } else {
+      pillCoord("warn", "Lat/Lon DIM (Lambert non détecté)");
+    }
+  } else if (Number.isFinite(latFromLam) && Number.isFinite(lonFromLam)) {
+    latNum = latFromLam;
+    lonNum = lonFromLam;
+    latSrc = "Calculées depuis Lambert II étendu";
+    pillCoord("warn", "Lat/Lon calculées depuis Lambert II étendu");
+  } else {
+    pillCoord("bad", "Coordonnées non détectées");
+  }
+
+  // 3) Localisation via BAN
+  const data = {
+    operator: op.value,
+    date: dt.value,
+    siteRef: sr.value,
+    addrLine: adr.value,
+    addrCarto: adr.value ? adr.value.replace(/,/g,"") : "",
+    city: "",
+    dept: "",
+    region: "",
+    x: Number.isFinite(xy.x) ? Math.round(xy.x).toString() : "",
+    y: Number.isFinite(xy.y) ? Math.round(xy.y).toString() : "",
+    latNum: latNum,
+    lonNum: lonNum,
+    lat: Number.isFinite(latNum) ? formatDec(latNum, 7) : "",
+    lon: Number.isFinite(lonNum) ? formatDec(lonNum, 7) : "",
+    src: latSrc,
+    deltaM: deltaM,
+    azList: az.list,
+    azPretty: az.list.length ? az.list.join(" / ") : "",
+    azCsv: az.list.length ? az.list.join(";") : ""
+  };
+
+  await fillLocationFromBAN(data);
+
+  // 4) Remplir UI
+  setVal("doc_operator", data.operator);
+  setVal("doc_date", data.date);
+  setVal("doc_siteRef", data.siteRef);
+
+  setVal("loc_addrCarto", data.addrCarto);
+  setVal("loc_city", data.city);
+  setVal("loc_dept", data.dept);
+  setVal("loc_region", data.region);
+  setVal("loc_city", com.value);
+
+
+  setVal("coord_x", data.x);
+  setVal("coord_y", data.y);
+  setVal("coord_lat", data.lat);
+  setVal("coord_lon", data.lon);
+  setVal("coord_latlon", data.lat && data.lon ? (data.lat + ", " + data.lon) : "");
+  setVal("coord_lonlat", data.lon && data.lat ? (data.lon + "," + data.lat) : "");
+  setVal("coord_src", data.src);
+  setVal("coord_delta", data.deltaM);
+
+  setVal("ant_az_pretty", data.azPretty);
+  setVal("ant_az_csv", data.azCsv);
+
+  const summary = buildSummary(data);
+  setVal("export_summary", summary);
+
+  const exportObj = {
+    operateur: data.operator,
+    date: data.date,
+    reference_site: data.siteRef,
+    adresse_cartoradio: data.addrCarto,
+    commune: data.city,
+    departement: data.dept,
+    region: data.region,
+    x_lambert2e: data.x,
+    y_lambert2e: data.y,
+    latitude: data.lat,
+    longitude: data.lon,
+    latlon_source: data.src,
+    ecart_dim_calcul_m: data.deltaM,
+    azimuts: data.azList
+  };
+  setVal("export_json", JSON.stringify(exportObj));
+
+  // 5) Traçabilité
+  setText("traceDoc",
+    (op.value ? `Opérateur (p.${op.page}): ${op.snippet}\n` : "") +
+    (dt.value ? `Date (p.${dt.page}): ${dt.snippet}\n` : "") +
+    (sr.value ? `Référence (p.${sr.page}): ${sr.snippet}\n` : "")
+  );
+
+  setText("traceLoc",
+    (adr.value ? `Adresse (p.${adr.page}): ${adr.snippet}\n` : "") +
+    (data.addrCarto ? `Adresse Cartoradio: ${data.addrCarto}\n` : "") +
+    (data.city ? `Commune: ${data.city}\n` : "") +
+    (data.dept ? `Département: ${data.dept}\n` : "") +
+    (data.region ? `Région: ${data.region}\n` : "")
+  );
+
+  const coordTraceLines = [];
+  if (xy.pageX) coordTraceLines.push(`X (p.${xy.pageX}): ${xy.snipX}`);
+  if (xy.pageY) coordTraceLines.push(`Y (p.${xy.pageY}): ${xy.snipY}`);
+  if (ll.pageLat) coordTraceLines.push(`Latitude (p.${ll.pageLat}): ${ll.snipLat}`);
+  if (ll.pageLon) coordTraceLines.push(`Longitude (p.${ll.pageLon}): ${ll.snipLon}`);
+  setText("traceCoord", coordTraceLines.join("\n"));
+
+  const antTrace = [];
+  if (az.list.length) antTrace.push("Azimuts détectés: " + az.list.join(", "));
+  if (az.trace) antTrace.push(az.trace);
+  setText("traceAnt", antTrace.join("\n"));
+
+  setStatus("Analyse terminée.", "ok");
+}
+
+/* =========================================================
+   Events
+   ========================================================= */
+$("btnClear").addEventListener("click", clearAllFields);
+
+$("btnOpenCarto").addEventListener("click", () => {
+  window.open("https://www.cartoradio.fr/", "_blank", "noopener");
+});
+
+$("selDoc").addEventListener("click", () => selectBlock("blockDoc"));
+$("selLoc").addEventListener("click", () => selectBlock("blockLoc"));
+$("selCoord").addEventListener("click", () => selectBlock("blockCoord"));
+$("selAnt").addEventListener("click", () => selectBlock("blockAnt"));
+$("selAll").addEventListener("click", () => selectBlock("blockExport"));
+
+[
+  "doc_operator","doc_date","doc_siteRef",
+  "loc_addrCarto","loc_city","loc_dept","loc_region",
+  "coord_x","coord_y","coord_lat","coord_lon","coord_latlon","coord_lonlat","coord_src","coord_delta",
+  "ant_az_pretty","ant_az_csv",
+  "export_summary","export_json"
+].forEach(fid => {
+  const btn = $("copy_" + fid);
+  if (btn) btn.addEventListener("click", () => copyFieldValue(fid));
+});
+
+$("btnAnalyze").addEventListener("click", async () => {
+setStatus("Bouton Analyser cliqué.", "ok");
+
+  const f = $("pdfFile").files && $("pdfFile").files[0] ? $("pdfFile").files[0] : null;
+  if (!f) { setStatus("Veuillez sélectionner un PDF DIM.", "err"); return; }
+
+  const maxPages = Math.max(1, Math.min(10, Number($("maxPages").value || 10)));
+
+  clearAllFields();
+  setStatus("Chargement du PDF...", "ok");
+
+  try {
+    const buf = await f.arrayBuffer();
+    const pages = await runOcrOnPdf(buf, maxPages);
+    setStatus("Parsing des informations...", "ok");
+    await parseAndFill(pages);
+  } catch(e) {
+    setStatus("Erreur : " + (e && e.message ? e.message : String(e)), "err");
+  }
+});
+
+// init
+clearAllFields();
+</script>
 </body>
 </html>
+
 
