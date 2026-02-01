@@ -254,6 +254,17 @@ V1 : extraction champs clés + traçabilité. OCR limité à 10 pages.
 <script>
 "use strict";
 
+window.addEventListener("error", (ev) => {
+  try { dbg("JS ERROR: " + (ev.message || ev.error || "Erreur inconnue")); } catch(e) {}
+  try { setStatus("Erreur JavaScript : voir Debug.", "err"); } catch(e) {}
+});
+
+window.addEventListener("unhandledrejection", (ev) => {
+  try { dbg("PROMISE REJECT: " + (ev.reason ? (ev.reason.message || ev.reason) : "rejet")); } catch(e) {}
+  try { setStatus("Erreur (Promise) : voir Debug.", "err"); } catch(e) {}
+});
+
+
 
 /* =========================================================
    Helpers DOM / UI
@@ -369,17 +380,43 @@ async function copyFieldValue(inputId){
 /* =========================================================
    PDF.js configuration
    ========================================================= */
-pdfjsLib.GlobalWorkerOptions.workerSrc =
-  "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.js";
+// pdfjsLib.GlobalWorkerOptions.workerSrc =
+// "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.js";
 
 /* =========================================================
    Projections : Lambert II étendu (EPSG:27572) -> WGS84 (EPSG:4326)
    ========================================================= */
-proj4.defs("EPSG:27572",
-  "+proj=lcc +lat_1=46.8 +lat_2=45.89891888888889 +lat_0=46.8 " +
-  "+lon_0=0 +x_0=600000 +y_0=2200000 +a=6378249.2 +b=6356515 " +
-  "+towgs84=-168,-60,320,0,0,0,0 +units=m +no_defs"
-);
+ //proj4.defs("EPSG:27572",
+ // "+proj=lcc +lat_1=46.8 +lat_2=45.89891888888889 +lat_0=46.8 " +
+ // "+lon_0=0 +x_0=600000 +y_0=2200000 +a=6378249.2 +b=6356515 " +
+ // "+towgs84=-168,-60,320,0,0,0,0 +units=m +no_defs");
+
+let _projInited = false;
+let _pdfWorkerSet = false;
+
+function ensureLibsReady(){
+  if (!window.pdfjsLib) throw new Error("PDF.js non chargé (CDN).");
+  if (!window.Tesseract) throw new Error("Tesseract.js non chargé (CDN).");
+  if (!window.proj4) throw new Error("Proj4 non chargé (CDN).");
+
+  // PDF worker : à faire une seule fois
+  if (!_pdfWorkerSet) {
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.js";
+    _pdfWorkerSet = true;
+  }
+
+  // EPSG:27572 : à faire une seule fois
+  if (!_projInited) {
+    proj4.defs("EPSG:27572",
+      "+proj=lcc +lat_1=46.8 +lat_2=45.89891888888889 +lat_0=46.8 " +
+      "+lon_0=0 +x_0=600000 +y_0=2200000 +a=6378249.2 +b=6356515 " +
+      "+towgs84=-168,-60,320,0,0,0,0 +units=m +no_defs"
+    );
+    _projInited = true;
+  }
+}
+
 
 /* =========================================================
    OCR + parsing
@@ -969,6 +1006,16 @@ $("selAll").addEventListener("click", () => selectBlock("blockExport"));
 });
 
 $("btnAnalyze").addEventListener("click", async () => {
+  dbg("CLICK Analyser");
+  try {
+    ensureLibsReady();
+    dbg("Libs OK (pdfjs/tesseract/proj4)");
+  } catch(e) {
+    dbg("Libs KO: " + (e && e.message ? e.message : String(e)));
+    setStatus("Librairies non chargées : voir Debug. Recharge Ctrl+F5.", "err");
+    return;
+  }
+
   // Vérif libs au clic
   if (!window.pdfjsLib || !window.Tesseract || !window.proj4) {
     setStatus("Librairies OCR non chargées (CDN). Rechargez la page (Ctrl+F5).", "err");
