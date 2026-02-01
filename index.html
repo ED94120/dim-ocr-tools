@@ -1054,26 +1054,6 @@ $("btnAnalyze").addEventListener("click", async () => {
 });
 
 
-setStatus("Bouton Analyser cliqué.", "ok");
-
-  const f = $("pdfFile").files && $("pdfFile").files[0] ? $("pdfFile").files[0] : null;
-  if (!f) { setStatus("Veuillez sélectionner un PDF DIM.", "err"); return; }
-
-  const maxPages = Math.max(1, Math.min(10, Number($("maxPages").value || 10)));
-
-  clearAllFields();
-  setStatus("Chargement du PDF...", "ok");
-
-  try {
-    const buf = await f.arrayBuffer();
-    const pages = await runOcrOnPdf(buf, maxPages);
-    setStatus("Parsing des informations...", "ok");
-    await parseAndFill(pages);
-  } catch(e) {
-    setStatus("Erreur : " + (e && e.message ? e.message : String(e)), "err");
-  }
-});
-
 // init
 clearAllFields();
 </script>
