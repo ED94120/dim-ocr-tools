@@ -294,6 +294,8 @@ function setText(id, v){
 }
 
 function clearAllFields(){
+   setText("debugLog", "");
+
   [
     "doc_operator","doc_date","doc_siteRef",
     "loc_addrCarto","loc_city","loc_dept","loc_region",
@@ -425,124 +427,78 @@ function findAllRegex(pages, re){
   return out;
 }
 
-function extractOperator(pages){
-const hit = findFirstRegex(pages, /^[#\s]*[il]?\s*op[ée]rateur\s*:\s*(.+)$/im);
-
-  if (hit) {
-    return {
-      value: hit.match[1].trim().toUpperCase(),
-      page: hit.page,
-      snippet: hit.match[0]
-    };
-  }
-  return { value:"", page:null, snippet:"" };
+function joinedText(pages){
+  return pages.map(p => p.text || "").join("\n");
 }
 
+function extractOperator(pages){
+  const t = joinedText(pages);
+  const m = t.match(/\bop[ée]rateur\b\s*[:\-]\s*([^\n]+)/i);
+  if (m) return { value: normSpaces(m[1]).toUpperCase(), page: null, snippet: m[0] };
+  // fallback marqueurs opérateurs
+  if (/\bfree\b/i.test(t)) return { value:"FREE MOBILE", page:null, snippet:"free" };
+  if (/\borange\b/i.test(t)) return { value:"ORANGE", page:null, snippet:"orange" };
+  if (/\bsfr\b/i.test(t)) return { value:"SFR", page:null, snippet:"sfr" };
+  if (/\bbouygues\b/i.test(t)) return { value:"BOUYGUES TELECOM", page:null, snippet:"bouygues" };
+  return { value:"", page:null, snippet:"" };
+}
 
 function extractDate(pages){
+  const t = joinedText(pages);
 
-  // PRIORITÉ DIM : ligne normalisée "# DATE : ..."
-  const hit0 = findFirstRegex(
-    pages,
-    /^#\s*date\s*:\s*(\d{2}\/\d{2}\/\d{4})/im
-  );
-  if (hit0) {
-    return {
-      value: hit0.match[1],
-      page: hit0.page,
-      snippet: hit0.match[0]
-    };
-  }
+  // priorité : DATE : 29/08/2023 (ou 29-08-2023)
+  const m0 = t.match(/\bdate\b\s*[:\-]\s*(\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4})/i);
+  if (m0) return { value: m0[1], page:null, snippet:m0[0] };
 
-  // fallback : "DATE :" générique
-  const hit1 = findFirstRegex(
-    pages,
-    /(?:\bdate\b\s*[:\-]?\s*)(\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4})/i
-  );
-  if (hit1) {
-    return { value: hit1.match[1], page: hit1.page, snippet: hit1.match[0] };
-  }
-
-  // dernier recours : première date trouvée
-  const hit2 = findFirstRegex(
-    pages,
-    /(\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4})/
-  );
-  if (hit2) {
-    return { value: hit2.match[1], page: hit2.page, snippet: hit2.match[0] };
-  }
+  // fallback : première date plausible
+  const m1 = t.match(/(\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4})/);
+  if (m1) return { value: m1[1], page:null, snippet:m1[0] };
 
   return { value:"", page:null, snippet:"" };
 }
 
-
 function extractSiteRef(pages){
-const hit0 = findFirstRegex(
-  pages,
-  /^[#\s]*[il]?\s*code\s*site\s*:\s*([0-9]{5}[_\s][0-9]{3}[_\s][0-9]{2})/im
-);
-if (hit0) {
-  return {
-    value: hit0.match[1].replace(/\s+/g, "_"),
-    page: hit0.page,
-    snippet: hit0.match[0]
-  };
-}
+  const t = joinedText(pages);
 
+  // CODE SITE : 59316_002_01 (tolère espaces/underscores)
+  const m0 = t.match(/\bcode\s*site\b\s*[:\-]\s*([0-9]{5}[\s_][0-9]{3}[\s_][0-9]{2})/i);
+  if (m0) return { value: m0[1].replace(/\s+/g, "_"), page:null, snippet:m0[0] };
 
-  // format fréquent: 59316_002_01
-  const hitA = findFirstRegex(pages, /\b\d{5}_\d{3}_\d{2}\b/);
-  if (hitA) return { value: hitA.match[0], page: hitA.page, snippet: hitA.match[0] };
-
-  // "CODE SITE : ...."
-  const hitB = findFirstRegex(pages, /(?:code\s*(?:du\s*)?site|site\s*code|id\s*site)\s*[:\-]?\s*([A-Z0-9_]{6,})/i);
-  if (hitB) return { value: hitB.match[1], page: hitB.page, snippet: hitB.match[0] };
-
-  // "NOM DU SITE : ..."
-  const hitC = findFirstRegex(pages, /(?:nom\s*du\s*site)\s*[:\-]?\s*([A-Z0-9_]{6,})/i);
-  if (hitC) return { value: hitC.match[1], page: hitC.page, snippet: hitC.match[0] };
+  // fallback : motif brut 59316_002_01
+  const m1 = t.match(/\b\d{5}_\d{3}_\d{2}\b/);
+  if (m1) return { value: m1[0], page:null, snippet:m1[0] };
 
   return { value:"", page:null, snippet:"" };
 }
 
 function extractAddressLine(pages){
-  const hit0 = findFirstRegex(
-  pages,
-  /^[#\s]*[il]?\s*adresse\s*du\s*site\s*:\s*(.+)$/im
-);
-if (hit0) {
-  return {
-    value: normSpaces(hit0.match[1]),
-    page: hit0.page,
-    snippet: hit0.match[0]
-  };
-}
+  const t = joinedText(pages);
 
-  // "ADRESSE : ...."
-  const hit = findFirstRegex(pages, /(?:adresse\s*(?:du\s*site)?\s*[:\-])\s*([^\n]{10,})/i);
-  if (hit) return { value: normSpaces(hit.match[1]), page: hit.page, snippet: hit.match[0] };
+  // ADRESSE DU SITE : 886, rue Roger Salengro
+  const m0 = t.match(/\badresse\s*(?:du\s*site)?\b\s*[:\-]\s*([^\n]+)/i);
+  if (m0) return { value: normSpaces(m0[1]), page:null, snippet:m0[0] };
 
-  // fallback: ligne contenant CP + commune (France)
-  const hit2 = findFirstRegex(pages, /([0-9]{1,4}\s+[^\n]{3,}\s+\b\d{5}\b\s+[A-ZÀ-ÖØ-Ýa-zà-öø-ÿ'\- ]{3,})/);
-  if (hit2) return { value: normSpaces(hit2.match[1]), page: hit2.page, snippet: hit2.match[0] };
+  // fallback : ligne contenant CP + commune
+  const m1 = t.match(/([0-9]{1,4}\s+[^\n]{3,}\s+\b\d{5}\b\s+[A-ZÀ-ÖØ-Ýa-zà-öø-ÿ'\- ]{3,})/);
+  if (m1) return { value: normSpaces(m1[1]), page:null, snippet:m1[0] };
 
   return { value:"", page:null, snippet:"" };
 }
 
 function extractCommune(pages){
-  const hit = findFirstRegex(
-    pages,
-    /^[#\s]*[il]?\s*commune\s*:\s*(.+)$/im
-  );
-  if (hit) {
-    return {
-      value: normSpaces(hit.match[1]),
-      page: hit.page,
-      snippet: hit.match[0]
-    };
+  const t = joinedText(pages);
+
+  // COMMUNE : 59263 HOUPLIN ANCOISNE  (ou sans code postal)
+  const m0 = t.match(/\bcommune\b\s*[:\-]\s*([^\n]+)/i);
+  if (m0) {
+    // nettoie "59263 ..." si présent au début
+    const v = normSpaces(m0[1]).replace(/^\d{5}\s+/, "");
+    return { value: v, page:null, snippet:m0[0] };
   }
+
   return { value:"", page:null, snippet:"" };
 }
+
 
 
 function parseNumberLoose(s){
@@ -826,6 +782,8 @@ function formatDec(n, dec){
 }
 
 async function parseAndFill(pages){
+
+  dbg("parseAndFill() appelé. pages=" + (pages ? pages.length : 0));
 
   // 1) extraction champs
   const op = extractOperator(pages);
