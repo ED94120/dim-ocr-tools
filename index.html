@@ -394,28 +394,110 @@ async function copyFieldValue(inputId){
 let _projInited = false;
 let _pdfWorkerSet = false;
 
-function ensureLibsReady(){
-  if (!window.pdfjsLib) throw new Error("PDF.js non chargé (CDN).");
-  if (!window.Tesseract) throw new Error("Tesseract.js non chargé (CDN).");
-  if (!window.proj4) throw new Error("Proj4 non chargé (CDN).");
+async function loadScriptOnce(url){
+  return new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = url;
+    s.async = true;
+    s.onload = () => resolve(url);
+    s.onerror = () => reject(new Error("Echec chargement: " + url));
+    document.head.appendChild(s);
+  });
+}
 
-  // PDF worker : à faire une seule fois
-  if (!_pdfWorkerSet) {
-    pdfjsLib.GlobalWorkerOptions.workerSrc =
-      "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.js";
-    _pdfWorkerSet = true;
+async function ensureLibsReady(){
+  const missing = [];
+  if (!window.pdfjsLib) missing.push("pdfjsLib");
+  if (!window.Tesseract) missing.push("Tesseract");
+  if (!window.proj4) missing.push("proj4");
+
+  // Si tout est déjà là, on init et on sort
+  if (missing.length === 0) {
+    initPdfWorkerAndProj();
+    return;
   }
 
-  // EPSG:27572 : à faire une seule fois
-  if (!_projInited) {
+  dbg("Librairies manquantes: " + missing.join(", "));
+
+  // Fallbacks CDN (ordre : jsdelivr -> unpkg -> cdnjs)
+  const loaders = [];
+
+  if (!window.pdfjsLib) {
+    loaders.push([
+      "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.js",
+      "https://unpkg.com/pdfjs-dist@4.10.38/build/pdf.min.js",
+      "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.js"
+    ]);
+  }
+  if (!window.Tesseract) {
+    loaders.push([
+      "https://cdn.jsdelivr.net/npm/tesseract.js@5.0.5/dist/tesseract.min.js",
+      "https://unpkg.com/tesseract.js@5.0.5/dist/tesseract.min.js",
+      "https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.0.5/tesseract.min.js"
+    ]);
+  }
+  if (!window.proj4) {
+    loaders.push([
+      "https://cdn.jsdelivr.net/npm/proj4@2.11.0/dist/proj4.js",
+      "https://unpkg.com/proj4@2.11.0/dist/proj4.js",
+      "https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.11.0/proj4.js"
+    ]);
+  }
+
+  for (const urls of loaders) {
+    let ok = false;
+    for (const u of urls) {
+      try {
+        dbg("Tentative CDN: " + u);
+        await loadScriptOnce(u);
+        ok = true;
+        dbg("OK: " + u);
+        break;
+      } catch(e) {
+        dbg("KO: " + (e && e.message ? e.message : String(e)));
+      }
+    }
+    if (!ok) {
+      throw new Error("Impossible de charger une librairie (CDN bloqué).");
+    }
+  }
+
+  // Vérif finale + init
+  if (!window.pdfjsLib) throw new Error("PDF.js toujours absent après fallback.");
+  if (!window.Tesseract) throw new Error("Tesseract toujours absent après fallback.");
+  if (!window.proj4) throw new Error("Proj4 toujours absent après fallback.");
+
+  initPdfWorkerAndProj();
+}
+
+window._projInited = window._projInited || false;
+window._pdfWorkerSet = window._pdfWorkerSet || false;
+
+function initPdfWorkerAndProj(){
+  if (!window._pdfWorkerSet) {
+    // Important : si tu utilises cdnjs pour pdf.js, le worker doit aussi être cdnjs.
+    // Ici on reste sur jsdelivr (si pdf.min.js venait de cdnjs mais worker jsdelivr échoue, ça plantera)
+    // Donc on met un workerSrc "multi-CDN" : il suffit qu’un marche.
+    const workerCandidates = [
+      "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.js",
+      "https://unpkg.com/pdfjs-dist@4.10.38/build/pdf.worker.min.js",
+      "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.js"
+    ];
+    // On prend le 1er; si échec réel, on gérera à l’usage via try/catch OCR
+    pdfjsLib.GlobalWorkerOptions.workerSrc = workerCandidates[0];
+    window._pdfWorkerSet = true;
+  }
+
+  if (!window._projInited) {
     proj4.defs("EPSG:27572",
       "+proj=lcc +lat_1=46.8 +lat_2=45.89891888888889 +lat_0=46.8 " +
       "+lon_0=0 +x_0=600000 +y_0=2200000 +a=6378249.2 +b=6356515 " +
       "+towgs84=-168,-60,320,0,0,0,0 +units=m +no_defs"
     );
-    _projInited = true;
+    window._projInited = true;
   }
 }
+
 
 
 /* =========================================================
