@@ -809,15 +809,11 @@ async function runOcrOnPdf(arrayBuffer, maxPages){
   setProgress("PDF chargé : " + pdf.numPages + " page(s). OCR sur " + total + " page(s).");
 
 const worker = await Tesseract.createWorker({
-  logger: (m) => {
-    if (m && m.status === "recognizing text" && typeof m.progress === "number") {
-      const pct = Math.round(100 * m.progress);
-      document.getElementById("progress").textContent = "OCR en cours... " + pct + " %";
-    }
-  },
+  workerPath: "./libs/tesseract/worker.min.js",
   corePath: "./libs/tesseract/tesseract-core.wasm.js",
   langPath: "./libs/tessdata"
 });
+
 
   await worker.loadLanguage("fra");
   await worker.initialize("fra");
@@ -1166,5 +1162,6 @@ clearAllFields();
 </script>
 </body>
 </html>
+
 
 
