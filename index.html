@@ -39,13 +39,13 @@
   </style>
 
   <!-- PDF.js (render pages) -->
-  <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.js"></script>
+  // on chargera pdf.mjs dans le code ailleurs, via import dynamique
 
   <!-- Tesseract.js (OCR local) -->
-  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.5/dist/tesseract.min.js"></script>
+  <script src="./libs/tesseract/tesseract.min.js"></script>
 
   <!-- Proj4js (Lambert II étendu -> WGS84) -->
-  <script src="https://cdn.jsdelivr.net/npm/proj4@2.11.0/dist/proj4.js"></script>
+  <script src="./libs/proj4/proj4.min.js"></script>
 </head>
 
 <body>
@@ -252,6 +252,18 @@ V1 : extraction champs clés + traçabilité. OCR limité à 10 pages.
   </div>
 
 <script>
+
+async function ensurePdfJsModule(){
+  if (window.pdfjsLib) return window.pdfjsLib;
+
+  const mod = await import("./libs/pdfjs/pdf.mjs");
+  window.pdfjsLib = mod; // pdfjsLib exporté par le module
+
+  // worker local
+  window.pdfjsLib.GlobalWorkerOptions.workerSrc = "./libs/pdfjs/pdf.worker.mjs";
+  return window.pdfjsLib;
+}
+
 "use strict";
 
 window.addEventListener("error", (ev) => {
@@ -790,17 +802,12 @@ async function runOcrOnPdf(arrayBuffer, maxPages){
   const total = Math.min(pdf.numPages, Math.max(1, Math.min(10, maxPages)));
   setProgress("PDF chargé : " + pdf.numPages + " page(s). OCR sur " + total + " page(s).");
 
-  const worker = await Tesseract.createWorker({
-logger: (m) => {
-  if (m && m.status) {
-    if (m.status === "recognizing text" && typeof m.progress === "number") {
-      const pct = Math.round(100 * m.progress);
-      setProgress("OCR en cours... " + pct + " %");
-    }
-  }
-}
-
-  });
+const worker = await Tesseract.createWorker("fra", 1, {
+  logger: (m) => { /* ton code */ },
+  workerPath: "./libs/tesseract/tesseract.min.js",
+  corePath: "./libs/tesseract/tesseract-core.wasm.js",
+  langPath: "./libs/tessdata"
+});
 
   await worker.loadLanguage("fra");
   await worker.initialize("fra");
