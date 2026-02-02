@@ -1,3 +1,7 @@
+
+
+
+
 <!doctype html>
 <html lang="fr">
 <head>
@@ -808,11 +812,12 @@ async function runOcrOnPdf(arrayBuffer, maxPages){
   const total = Math.min(pdf.numPages, Math.max(1, Math.min(10, maxPages)));
   setProgress("PDF chargé : " + pdf.numPages + " page(s). OCR sur " + total + " page(s).");
 
-const worker = await Tesseract.createWorker({
+const worker = await Tesseract.createWorker("fra", 1, {
   workerPath: "./libs/tesseract/worker.min.js",
   corePath: "./libs/tesseract/tesseract-core.wasm.js",
   langPath: "./libs/tessdata"
 });
+
 
 
   await worker.loadLanguage("fra");
@@ -1162,6 +1167,3 @@ clearAllFields();
 </script>
 </body>
 </html>
-
-
-
