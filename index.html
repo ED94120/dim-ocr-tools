@@ -39,7 +39,7 @@
   </style>
 
   <!-- PDF.js (render pages) -->
-  // on chargera pdf.mjs dans le code ailleurs, via import dynamique
+  <!-- on chargera pdf.mjs dans le code ailleurs, via import dynamique -->
 
   <!-- Tesseract.js (OCR local) -->
   <script src="./libs/tesseract/tesseract.min.js"></script>
@@ -257,11 +257,13 @@ async function ensurePdfJsModule(){
   if (window.pdfjsLib) return window.pdfjsLib;
 
   const mod = await import("./libs/pdfjs/pdf.mjs");
-  window.pdfjsLib = mod; // pdfjsLib exporté par le module
+window.pdfjsLib = mod;
 
-  // worker local
-  window.pdfjsLib.GlobalWorkerOptions.workerSrc = "./libs/pdfjs/pdf.worker.mjs";
-  return window.pdfjsLib;
+window.pdfjsLib.GlobalWorkerOptions.workerPort =
+  new Worker("./libs/pdfjs/pdf.worker.mjs", { type: "module" });
+
+return window.pdfjsLib;
+
 }
 
 "use strict";
@@ -802,12 +804,13 @@ async function runOcrOnPdf(arrayBuffer, maxPages){
   const total = Math.min(pdf.numPages, Math.max(1, Math.min(10, maxPages)));
   setProgress("PDF chargé : " + pdf.numPages + " page(s). OCR sur " + total + " page(s).");
 
-const worker = await Tesseract.createWorker("fra", 1, {
-  logger: (m) => { /* ton code */ },
-  workerPath: "./libs/tesseract/tesseract.min.js",
+const worker = await Tesseract.createWorker({
+  logger: (m) => { /* ton logger */ },
+  workerPath: "./libs/tesseract/worker.min.js",
   corePath: "./libs/tesseract/tesseract-core.wasm.js",
   langPath: "./libs/tessdata"
 });
+
 
   await worker.loadLanguage("fra");
   await worker.initialize("fra");
@@ -1096,20 +1099,20 @@ $("selAll").addEventListener("click", () => selectBlock("blockExport"));
 
 $("btnAnalyze").addEventListener("click", async () => {
   dbg("CLICK Analyser");
-  try {
-    ensureLibsReady();
-    dbg("Libs OK (pdfjs/tesseract/proj4)");
-  } catch(e) {
-    dbg("Libs KO: " + (e && e.message ? e.message : String(e)));
-    setStatus("Librairies non chargées : voir Debug. Recharge Ctrl+F5.", "err");
-    return;
-  }
+try {
+  await ensurePdfJsModule();
+  dbg("PDF.js local OK");
+} catch(e) {
+  dbg("PDF.js local KO: " + (e && e.message ? e.message : String(e)));
+  setStatus("PDF.js local non chargé : voir Debug.", "err");
+  return;
+}
 
   // Vérif libs au clic
-  if (!window.pdfjsLib || !window.Tesseract || !window.proj4) {
-    setStatus("Librairies OCR non chargées (CDN). Rechargez la page (Ctrl+F5).", "err");
-    return;
-  }
+if (!window.pdfjsLib || !window.Tesseract || !window.proj4) {
+  setStatus("Librairies locales non chargées.", "err");
+  return;
+}
 
   const f = $("pdfFile").files && $("pdfFile").files[0] ? $("pdfFile").files[0] : null;
   if (!f) { setStatus("Veuillez sélectionner un PDF DIM.", "err"); return; }
