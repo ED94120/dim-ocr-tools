@@ -254,17 +254,21 @@ V1 : extraction champs clés + traçabilité. OCR limité à 10 pages.
 <script>
 
 async function ensurePdfJsModule(){
-  if (window.pdfjsLib) return window.pdfjsLib;
+  if (window.pdfjsLib && window.pdfjsLib.getDocument) return window.pdfjsLib;
 
-  const mod = await import("./libs/pdfjs/pdf.mjs");
-window.pdfjsLib = mod;
+  const pdfjs = await import("./libs/pdfjs/pdf.mjs");
 
-window.pdfjsLib.GlobalWorkerOptions.workerPort =
-  new Worker("./libs/pdfjs/pdf.worker.mjs", { type: "module" });
+  // On fabrique un objet pdfjsLib minimal compatible avec ton code existant
+  window.pdfjsLib = pdfjs;
 
-return window.pdfjsLib;
+  // Worker local en module
+  window.pdfjsLib.GlobalWorkerOptions.workerPort =
+    new Worker("./libs/pdfjs/pdf.worker.mjs", { type: "module" });
 
+  return window.pdfjsLib;
 }
+
+
 
 "use strict";
 
@@ -805,11 +809,18 @@ async function runOcrOnPdf(arrayBuffer, maxPages){
   setProgress("PDF chargé : " + pdf.numPages + " page(s). OCR sur " + total + " page(s).");
 
 const worker = await Tesseract.createWorker({
-  logger: (m) => { /* ton logger */ },
-  workerPath: "./libs/tesseract/worker.min.js",
+  logger: (m) => {
+    // Affiche une progression simple
+    if (m && m.status) {
+      if (m.status === "recognizing text" && typeof m.progress === "number") {
+        setProgress("OCR en cours... " + Math.round(m.progress * 100) + " %");
+      }
+    }
+  },
   corePath: "./libs/tesseract/tesseract-core.wasm.js",
   langPath: "./libs/tessdata"
 });
+
 
 
   await worker.loadLanguage("fra");
@@ -1102,6 +1113,9 @@ $("btnAnalyze").addEventListener("click", async () => {
 try {
   await ensurePdfJsModule();
   dbg("PDF.js local OK");
+    if (!window.pdfjsLib || typeof window.pdfjsLib.getDocument !== "function") throw new Error("PDF.js incomplet (getDocument absent).");
+  dbg("PDF.js getDocument OK");
+
 } catch(e) {
   dbg("PDF.js local KO: " + (e && e.message ? e.message : String(e)));
   setStatus("PDF.js local non chargé : voir Debug.", "err");
