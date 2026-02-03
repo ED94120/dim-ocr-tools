@@ -620,41 +620,67 @@ function haversineMeters(lat1, lon1, lat2, lon2){
 }
 
 function extractAzimuts(pages){
-  // chercher toutes les lignes contenant "azimut"
-  const hits = findAllRegex(pages, /(?:azimut|azimuts|orientation)\s*[:\-]?\s*([0-9° \/\-;,]{1,50})/ig);
-
-  // aussi chercher dans tableaux: nombres suivis de ° dans un voisinage
-  const hitsDeg = findAllRegex(pages, /([0-9]{1,3})\s*°/g);
-
   const nums = [];
 
-  for (const h of hits) {
-    const s = h.match[1] || "";
-    const m = s.match(/[0-9]{1,3}/g);
-    if (m) m.forEach(v => nums.push({ v:Number(v), page:h.page, snip:h.match[0] }));
-  }
-  for (const h of hitsDeg) {
-    nums.push({ v:Number(h.match[1]), page:h.page, snip:h.match[0] });
+  // --- (A) Cas "Azimuts (S1/S2/S3)" + valeurs juste après (souvent sur lignes suivantes)
+  for (const p of pages) {
+    const t = p.text || "";
+    const m = t.match(/azimuts?\s*\(.*?s1.*?s2.*?s3.*?\)\s*[:\-]?\s*([\s\S]{0,120})/i);
+    if (m && m[1]) {
+      const degs = m[1].match(/\b([0-9]{1,3})\s*°/g) || [];
+      for (const d of degs) {
+        const v = Number((d.match(/([0-9]{1,3})/) || [,""])[1]);
+        if (Number.isFinite(v)) nums.push({ v, page: p.page, snip: "Azimuts(S1/S2/S3): " + d });
+      }
+      if (nums.length) break; // on a trouvé le bloc attendu, on s'arrête
+    }
   }
 
-  // filtre 0..359
+  // --- (B) Cas tableau avec secteurs S1/S2/S3 : ligne contenant S1... 60° etc.
+  if (!nums.length) {
+    for (const p of pages) {
+      const t = p.text || "";
+      if (!/azimut/i.test(t)) continue; // on ne scanne que les pages qui parlent d'azimut
+      const reLine = /(?:^|\n)\s*S\s*([1-6])\b[^\n]{0,120}?\b([0-9]{1,3})\s*°/ig;
+      let mm;
+      while ((mm = reLine.exec(t)) !== null) {
+        const v = Number(mm[2]);
+        if (Number.isFinite(v)) nums.push({ v, page: p.page, snip: "S" + mm[1] + " " + v + "°" });
+        if (mm.index === reLine.lastIndex) reLine.lastIndex++;
+      }
+    }
+  }
+
+  // --- (C) Fallback contrôlé : "Azimut(s) : 60°/180°/300°" (même ligne)
+  if (!nums.length) {
+    const hits = findAllRegex(pages, /azimuts?\s*[:\-]?\s*([0-9° \/\-;,]{1,80})/ig);
+    for (const h of hits) {
+      const s = h.match[1] || "";
+      const m = s.match(/[0-9]{1,3}/g);
+      if (m) m.forEach(v => nums.push({ v:Number(v), page:h.page, snip:h.match[0] }));
+    }
+  }
+
+  // filtre 0..359 + dédup + limite à 3
   const vals = nums.filter(o => Number.isFinite(o.v) && o.v >= 0 && o.v <= 359);
 
-  // dédup + tri
   const uniq = [];
   for (const o of vals) {
     if (!uniq.some(u => u.v === o.v)) uniq.push(o);
   }
-  uniq.sort((a,b) => a.v - b.v);
 
-  // trace: garder jusqu’à 5 extraits
-  const trace = uniq.slice(0, 5).map(o => `p.${o.page}: ${o.snip}`).join("\n");
+  // IMPORTANT : on ne trie pas par valeur (ça peut casser l'ordre des secteurs),
+  // on garde l'ordre d'apparition dans le document.
+  const limited = uniq.slice(0, 3);
+
+  const trace = limited.map(o => `p.${o.page}: ${o.snip}`).join("\n");
 
   return {
-    list: uniq.map(o => o.v),
+    list: limited.map(o => o.v),
     trace: trace
   };
 }
+
 
 /* =========================================================
    BAN (France) : compléter localisation à partir de lat/lon ou adresse
