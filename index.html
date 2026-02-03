@@ -172,15 +172,15 @@
       <input id="coord_lon" class="fieldVal" readonly />
       <button id="copy_coord_lon" class="btnCopy" type="button">Copier</button>
 
-      <div class="fieldLabel">Copie lat, lon</div>
+      <div class="fieldLabel">Latitude, longitude (°)</div>
       <input id="coord_latlon" class="fieldVal" readonly />
       <button id="copy_coord_latlon" class="btnCopy" type="button">Copier</button>
 
-      <div class="fieldLabel">Copie lon,lat (KML)</div>
+      <div class="fieldLabel">Longitude, latitude (KML)</div>
       <input id="coord_lonlat" class="fieldVal" readonly />
       <button id="copy_coord_lonlat" class="btnCopy" type="button">Copier</button>
 
-      <div class="fieldLabel">Source lat/lon</div>
+      <div class="fieldLabel">Source des lat/lon</div>
       <input id="coord_src" class="fieldVal" readonly />
       <button id="copy_coord_src" class="btnCopy" type="button">Copier</button>
 
@@ -208,11 +208,11 @@
     </div>
 
     <div class="grid" id="blockAnt">
-      <div class="fieldLabel">Azimuts (format lisible)</div>
+      <div class="fieldLabel">Azimuts (°)</div>
       <input id="ant_az_pretty" class="fieldVal" readonly />
       <button id="copy_ant_az_pretty" class="btnCopy" type="button">Copier</button>
 
-      <div class="fieldLabel">Azimuts (CSV ;)</div>
+      <div class="fieldLabel">Azimuts (format CSV ;)</div>
       <input id="ant_az_csv" class="fieldVal" readonly />
       <button id="copy_ant_az_csv" class="btnCopy" type="button">Copier</button>
     </div>
@@ -1063,9 +1063,11 @@ dbg("com=" + com.value + " (p." + com.page + ")");
     // pas de lat/lon dans le DIM, mais Lambert -> lat/lon calculées
     latNum = latFromLam;
     lonNum = lonFromLam;
-    latSrc = "Calculées depuis Lambert II étendu";
 
-    coherenceTxt = "Pas de lat, lon dans le DIM";
+    latSrc = "Calculées approximativement à partir des X,Y Lambert II étendu (± 200 m)";
+
+
+    coherenceTxt = "L'opérateur n'a pas renseigné de latitude ni de longitude dans le DIM";
     pillCoord("warn", "Lat/Lon calculées depuis Lambert II étendu");
 
   } else {
