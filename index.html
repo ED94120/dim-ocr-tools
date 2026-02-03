@@ -417,11 +417,13 @@ let _projInited = false;
 
 window._projInited = window._projInited || false;
 if (!window._projInited) {
-  proj4.defs("EPSG:27572",
-    "+proj=lcc +lat_1=46.8 +lat_2=45.89891888888889 +lat_0=46.8 " +
-    "+lon_0=0 +x_0=600000 +y_0=2200000 +a=6378249.2 +b=6356515 " +
-    "+towgs84=-168,-60,320,0,0,0,0 +units=m +no_defs"
-  );
+proj4.defs("EPSG:27572",
+  "+proj=lcc +lat_1=46.8 +lat_2=45.89891888888889 +lat_0=46.8 " +
+  "+lon_0=0 +x_0=600000 +y_0=2200000 +a=6378249.2 +b=6356515 " +
+  "+pm=paris " +
+  "+towgs84=-168,-60,320,0,0,0,0 +units=m +no_defs"
+);
+
   window._projInited = true;
 }
 
@@ -448,6 +450,10 @@ function normalizeOcrText(s){
   // remplace O par 0 seulement dans des tokens très numériques
   t = t.replace(/([0-9])O(?=[0-9])/g, "$10");
   t = t.replace(/O(?=[0-9])/g, "0");
+    // OCR fréquent : "6O°" au lieu de "60°"
+  t = t.replace(/([0-9])O(?=°)/g, "$10");
+  t = t.replace(/O(?=°)/g, "0");
+  
 
   return t;
 }
@@ -620,64 +626,44 @@ function haversineMeters(lat1, lon1, lat2, lon2){
 }
 
 function extractAzimuts(pages){
-  const nums = [];
+  const vals = [];
 
-  // --- (A) Cas "Azimuts (S1/S2/S3)" + valeurs juste après (souvent sur lignes suivantes)
+  // 1) Priorité : repérer la zone "Azimuts" dans les tableaux (lignes proches)
   for (const p of pages) {
-    const t = p.text || "";
-    const m = t.match(/azimuts?\s*\(.*?s1.*?s2.*?s3.*?\)\s*[:\-]?\s*([\s\S]{0,120})/i);
-    if (m && m[1]) {
-      const degs = m[1].match(/\b([0-9]{1,3})\s*°/g) || [];
-      for (const d of degs) {
-        const v = Number((d.match(/([0-9]{1,3})/) || [,""])[1]);
-        if (Number.isFinite(v)) nums.push({ v, page: p.page, snip: "Azimuts(S1/S2/S3): " + d });
-      }
-      if (nums.length) break; // on a trouvé le bloc attendu, on s'arrête
-    }
-  }
+    const lines = (p.text || "").split("\n").map(s => s.trim()).filter(Boolean);
 
-  // --- (B) Cas tableau avec secteurs S1/S2/S3 : ligne contenant S1... 60° etc.
-  if (!nums.length) {
-    for (const p of pages) {
-      const t = p.text || "";
-      if (!/azimut/i.test(t)) continue; // on ne scanne que les pages qui parlent d'azimut
-      const reLine = /(?:^|\n)\s*S\s*([1-6])\b[^\n]{0,120}?\b([0-9]{1,3})\s*°/ig;
-      let mm;
-      while ((mm = reLine.exec(t)) !== null) {
-        const v = Number(mm[2]);
-        if (Number.isFinite(v)) nums.push({ v, page: p.page, snip: "S" + mm[1] + " " + v + "°" });
-        if (mm.index === reLine.lastIndex) reLine.lastIndex++;
+    for (let i = 0; i < lines.length; i++) {
+      const L = lines[i];
+
+      // ligne titre tableau
+      if (/\bazimuts?\b/i.test(L)) {
+        // on concatène la ligne + quelques lignes suivantes (cas vertical 60°\n180°\n300°)
+        const chunk = [L, lines[i+1]||"", lines[i+2]||"", lines[i+3]||"", lines[i+4]||""].join(" ");
+
+        // récupérer toutes les valeurs de type "60°" (tolère O/0)
+        const m = chunk.match(/([0-9O]{1,3})\s*°/g);
+        if (m) {
+          for (const tok of m) {
+            const nStr = tok.replace("°","").trim().replace(/O/g,"0");
+            const n = Number(nStr);
+            if (Number.isFinite(n) && n >= 0 && n <= 359) vals.push({ v:n, page:p.page, snip:chunk });
+          }
+        }
       }
     }
   }
 
-  // --- (C) Fallback contrôlé : "Azimut(s) : 60°/180°/300°" (même ligne)
-  if (!nums.length) {
-    const hits = findAllRegex(pages, /azimuts?\s*[:\-]?\s*([0-9° \/\-;,]{1,80})/ig);
-    for (const h of hits) {
-      const s = h.match[1] || "";
-      const m = s.match(/[0-9]{1,3}/g);
-      if (m) m.forEach(v => nums.push({ v:Number(v), page:h.page, snip:h.match[0] }));
-    }
-  }
-
-  // filtre 0..359 + dédup + limite à 3
-  const vals = nums.filter(o => Number.isFinite(o.v) && o.v >= 0 && o.v <= 359);
-
+  // 2) Dédup + tri
   const uniq = [];
-  for (const o of vals) {
-    if (!uniq.some(u => u.v === o.v)) uniq.push(o);
-  }
+  for (const o of vals) if (!uniq.some(u => u.v === o.v)) uniq.push(o);
+  uniq.sort((a,b) => a.v - b.v);
 
-  // IMPORTANT : on ne trie pas par valeur (ça peut casser l'ordre des secteurs),
-  // on garde l'ordre d'apparition dans le document.
-  const limited = uniq.slice(0, 3);
-
-  const trace = limited.map(o => `p.${o.page}: ${o.snip}`).join("\n");
+  // 3) Au plus 3 azimuts (S1/S2/S3)
+  const final = uniq.slice(0, 3);
 
   return {
-    list: limited.map(o => o.v),
-    trace: trace
+    list: final.map(o => o.v),
+    trace: final.slice(0, 3).map(o => `p.${o.page}: ${o.v}°`).join("\n")
   };
 }
 
