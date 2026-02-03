@@ -588,8 +588,9 @@ function parseNumberLoose(s){
 
 function extractLambertXY(pages){
   // tolère "X = 647025" etc
-  const hitX = findFirstRegex(pages, /\bX\b\s*[:=]\s*([0-9O][0-9O\s]{4,})/i);
-  const hitY = findFirstRegex(pages, /\bY\b\s*[:=]\s*([0-9O][0-9O\s]{4,})/i);
+const hitX = findFirstRegex(pages, /(?:\bX\b|-\s*X)\s*[:=]\s*([0-9O][0-9O\s]*[0-9O](?:[.,]\d{1,3})?)/i);
+const hitY = findFirstRegex(pages, /(?:\bY\b|-\s*Y)\s*[:=]\s*([0-9O][0-9O\s]*[0-9O](?:[.,]\d{1,3})?)/i);
+
 
   const x = hitX ? parseNumberLoose(hitX.match[1].replace(/O/g,"0")) : NaN;
   const y = hitY ? parseNumberLoose(hitY.match[1].replace(/O/g,"0")) : NaN;
@@ -1086,8 +1087,9 @@ dbg("com=" + com.value + " (p." + com.page + ")");
     city: com.city || "",
     dept: "",
     region: "",
-    x: Number.isFinite(xy.x) ? Math.round(xy.x).toString() : "",
-    y: Number.isFinite(xy.y) ? Math.round(xy.y).toString() : "",
+    x: Number.isFinite(xy.x) ? formatDec(xy.x, 2).replace(/\.00$/, "") : "",
+    y: Number.isFinite(xy.y) ? formatDec(xy.y, 2).replace(/\.00$/, "") : "",
+
     latNum: latNum,
     lonNum: lonNum,
     lat: Number.isFinite(latNum) ? formatDec(latNum, 7) : "",
