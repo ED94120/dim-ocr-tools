@@ -262,8 +262,8 @@ async function ensurePdfJsModule(){
   window.pdfjsLib = pdfjs;
 
   // Worker local en module
-  window.pdfjsLib.GlobalWorkerOptions.workerPort =
-    new Worker("./libs/pdfjs/pdf.worker.mjs", { type: "module" });
+window.pdfjsLib.GlobalWorkerOptions.workerSrc = "./libs/pdfjs/pdf.worker.mjs";
+
 
   return window.pdfjsLib;
 }
@@ -413,6 +413,15 @@ let _projInited = false;
 
 
 window._projInited = window._projInited || false;
+if (!window._projInited) {
+  proj4.defs("EPSG:27572",
+    "+proj=lcc +lat_1=46.8 +lat_2=45.89891888888889 +lat_0=46.8 " +
+    "+lon_0=0 +x_0=600000 +y_0=2200000 +a=6378249.2 +b=6356515 " +
+    "+towgs84=-168,-60,320,0,0,0,0 +units=m +no_defs"
+  );
+  window._projInited = true;
+}
+
 
 
 /* =========================================================
@@ -722,12 +731,9 @@ const worker = await Tesseract.createWorker({
   langPath: "./libs/tessdata"
 });
 
+await worker.loadLanguage(["fra"]);
+await worker.initialize(["fra"]);
 
-
-
-
-  await worker.loadLanguage("fra");
-  await worker.initialize("fra");
 
   const pages = [];
   for (let i = 1; i <= total; i++) {
@@ -743,7 +749,7 @@ const worker = await Tesseract.createWorker({
     dbg("Page " + i + ": OCR");
 
     const { data } = await worker.recognize(canvas, {}, { logger: ocrLogger });
-
+  
     const text = normalizeOcrText(data && data.text ? data.text : "");
     pages.push({ page:i, text:text });
 
@@ -917,10 +923,11 @@ dbg("com=" + com.value + " (p." + com.page + ")");
   setVal("doc_siteRef", data.siteRef);
 
   setVal("loc_addrCarto", data.addrCarto);
-  setVal("loc_city", data.city);
+  
   setVal("loc_dept", data.dept);
   setVal("loc_region", data.region);
-  setVal("loc_city", com.value);
+ setVal("loc_city", com.value || data.city);
+
 
 
   setVal("coord_x", data.x);
