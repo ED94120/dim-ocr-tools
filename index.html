@@ -662,7 +662,7 @@ function extractAzimuts(pages){
     return /\bMHz\b/i.test(text);
   }
 
-  function extractAnglesFromText(txt, allowBareSlash){
+  function extractAnglesFromText(txt){
     const out = [];
 
     // 1) Valeurs explicites avec symbole degré ou guillemet
@@ -673,10 +673,10 @@ function extractAzimuts(pages){
       if (v >= 0 && v <= 359) out.push(v);
     }
 
-    // 2) Valeurs nues : UNIQUEMENT si elles sont suivies d'un "/" (ex: "60/180°/300")
-    //    => évite "Page 4 sur 21" (21 n'est pas suivi de "/")
-    if (allowBareSlash) {
-      const reBareSlash = /(\d{1,3})\s*(?=\/)/g;
+    // 2) Valeurs nues avant "/" : uniquement si on a déjà au moins un angle explicite dans le chunk
+    //    (évite dates type 29/08/2023, car pas de ° / " dans la date)
+    if (out.length > 0 && /\//.test(txt)) {
+      const reBareSlash = /(\d{1,3})\s*(?=\/)/g; // capte "60" dans "60/180°/300"
       while ((m = reBareSlash.exec(txt)) !== null) {
         const v = Number(m[1]);
         if (v >= 0 && v <= 359) out.push(v);
@@ -702,7 +702,6 @@ function extractAzimuts(pages){
       const prevOk = /^\d{1,3}$/.test(sPrev) && Number(sPrev) >= 0 && Number(sPrev) <= 359;
       const nextOk = /^\d{1,3}$/.test(sNext) && Number(sNext) >= 0 && Number(sNext) <= 359;
 
-      // Non isolé => on accepte
       if (prevOk || nextOk) {
         hits.push({ v: v, page: pageNum, snip: s });
       }
@@ -747,13 +746,9 @@ function extractAzimuts(pages){
         // Anti-faux positifs fréquences
         if (hasMHzNearby(chunkText)) continue;
 
-        // 2a) Extraction "avec °" + cas "60/180°/300" (valeur nue seulement si suivie de "/")
-        const allowBareSlash = /\//.test(chunkText);
-        const vals = extractAnglesFromText(chunkText, allowBareSlash);
-
-        for (const v of vals) {
-          hits.push({ v: v, page: p.page, snip: chunkText });
-        }
+        // 2a) Extraction "avec °" + cas "60/180°/300" (valeur nue seulement si ° détecté dans chunk)
+        const vals = extractAnglesFromText(chunkText);
+        for (const v of vals) hits.push({ v: v, page: p.page, snip: chunkText });
 
         // 2b) Extraction liste verticale (valeurs nues non isolées)
         pushVerticalBareAngles(lines, start, end, p.page);
@@ -1275,4 +1270,5 @@ clearAllFields();
 </script>
 </body>
 </html>
+
 
