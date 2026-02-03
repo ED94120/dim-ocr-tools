@@ -641,57 +641,133 @@ function extractAzimuts(pages){
   /* ================================
      Paramètres (ajustables)
      ================================ */
-  const AZ_WINDOW_BEFORE = 6;
-  const AZ_WINDOW_AFTER  = 40;
-  const MIN_ANGULAR_DIST = 80; // degrés
+  const KEY_BEFORE = 2;           // lignes avant mot-clé
+  const KEY_AFTER  = 2;           // lignes après mot-clé
+  const BUBBLE_MAX_LINES = 4;     // concat 1..4 lignes
+  const MIN_DIST = 80;            // séparation circulaire min (anti-tilts / anti-dates)
+  const MAX_DIGITS = 3;           // valeurs d'azimut : 1 à 3 chiffres
 
-  const hits = [];
+  // Mots-clés déclencheurs (mode "explicite")
+  const KEYWORDS_RE = /\b(azimut|azimuts|az\b|secteur|s1|s2|s3)\b/i;
+
+  // Déclencheurs très forts (S1/S2/S3 explicite)
+  const STRONG_S123_RE = /\b(azimuts?\s*\(s1\s*\/\s*s2\s*\/\s*s3\)|s1\s*\/\s*s2\s*\/\s*s3|secteur\s*[0-9]|azimut\s*[0-9])\b/i;
 
   function norm(s){
     return (s || "")
       .replace(/º/g, "°")
-      .replace(/[oO]/g, "0");
+      .replace(/[oO]/g, "0")
+      .replace(/\s+/g, " ")
+      .trim();
   }
 
-  function circDist(a, b){
+  function circDistMin(a, b){
     const d = Math.abs(a - b) % 360;
     return Math.min(d, 360 - d);
   }
 
-  function hasMHzNearby(text){
-    return /\bMHz\b/i.test(text);
+  function distinct3(a,b,c){
+    return (a !== b) && (a !== c) && (b !== c);
   }
 
-  function extractAnglesFromText(txt){
+  function validateTripletLoose(a, b, c){
+    // 1..3 digits, 0..359
+    if (!Number.isInteger(a) || !Number.isInteger(b) || !Number.isInteger(c)) return false;
+    if (a < 0 || a > 359 || b < 0 || b > 359 || c < 0 || c > 359) return false;
+    if (!distinct3(a,b,c)) return false;
+
+    // séparation minimale anti-tilts / anti-pages / anti-dates
+    if (circDistMin(a,b) < MIN_DIST) return false;
+    if (circDistMin(a,c) < MIN_DIST) return false;
+    if (circDistMin(b,c) < MIN_DIST) return false;
+
+    return true;
+  }
+
+  function makeBubbles(lines, i){
+    const start = Math.max(0, i - KEY_BEFORE);
+    const end   = Math.min(lines.length - 1, i + KEY_AFTER);
+
+    const local = [];
+    for (let k = start; k <= end; k++) local.push(lines[k] || "");
+
+    const bubbles = [];
+    for (let a = 0; a < local.length; a++) {
+      for (let len = 1; len <= BUBBLE_MAX_LINES; len++) {
+        if (a + len > local.length) break;
+        const txt = norm(local.slice(a, a + len).join(" "));
+        if (txt) bubbles.push(txt);
+      }
+    }
+    return bubbles;
+  }
+
+  function digitsOk(nStr){
+    return typeof nStr === "string" && nStr.length >= 1 && nStr.length <= MAX_DIGITS;
+  }
+
+  function extractAnglesWithSymbol(text){
+    // extrait uniquement des angles avec un symbole "degré-like" : ° ou " ou *
+    // + accepte aussi les triplets compacts avec "/" si au moins un symbole est présent dans la bulle
     const out = [];
 
-    // 1) Valeurs explicites avec symbole degré ou guillemet
+    const t = text;
+
+    // 1) valeurs avec symbole clair ° ou "
     let m;
-    const reDeg = /(\d{1,3})\s*[°"]/g;
-    while ((m = reDeg.exec(txt)) !== null) {
+    const reDeg = /(\d{1,3})\s*([°"])/g;
+    while ((m = reDeg.exec(t)) !== null) {
+      if (!digitsOk(m[1])) continue;
       const v = Number(m[1]);
-      if (v >= 0 && v <= 359) out.push(v);
+      if (Number.isFinite(v) && v >= 0 && v <= 359) out.push({ v, sym: 2 });
     }
 
-    // 2) Valeurs nues avant "/" : uniquement si on a déjà au moins un angle explicite dans le chunk
-    //    (évite dates type 29/08/2023, car pas de ° / " dans la date)
-    if (out.length > 0 && /\//.test(txt)) {
-      const reBareSlash = /(\d{1,3})\s*(?=\/)/g; // capte "60" dans "60/180°/300"
-      while ((m = reBareSlash.exec(txt)) !== null) {
+    // 2) valeurs suivies de "*" (OCR parfois)
+    const reStar = /(\d{1,3})\s*\*/g;
+    while ((m = reStar.exec(t)) !== null) {
+      if (!digitsOk(m[1])) continue;
+      const v = Number(m[1]);
+      if (Number.isFinite(v) && v >= 0 && v <= 359) out.push({ v, sym: 1 });
+    }
+
+    // 3) triplets compacts avec "/" : on accepte des valeurs NUES uniquement si :
+    //    - présence d'au moins un symbole degré-like dans la bulle
+    //    - et présence de "/" dans la bulle
+    //    Ceci permet de capturer "60/180°/300"" ou "40°/220°/310°"
+    if (out.length > 0 && /\//.test(t)) {
+      const reBareSlash = /(?:^|[^0-9])(\d{1,3})(?=\s*\/)/g;
+      while ((m = reBareSlash.exec(t)) !== null) {
+        if (!digitsOk(m[1])) continue;
         const v = Number(m[1]);
-        if (v >= 0 && v <= 359) out.push(v);
+        if (Number.isFinite(v) && v >= 0 && v <= 359) out.push({ v, sym: 0 });
+      }
+      // aussi le dernier terme après "/" s'il est nu, mais uniquement si la chaîne contient déjà un symbole
+      const reBareAfterSlash = /\/\s*(\d{1,3})(?=\D|$)/g;
+      while ((m = reBareAfterSlash.exec(t)) !== null) {
+        if (!digitsOk(m[1])) continue;
+        const v = Number(m[1]);
+        if (Number.isFinite(v) && v >= 0 && v <= 359) out.push({ v, sym: 0 });
       }
     }
 
-    return out;
+    // dédup
+    const uniq = [];
+    for (const a of out) if (!uniq.some(u => u.v === a.v)) uniq.push(a);
+
+    return uniq;
   }
 
-  function pushVerticalBareAngles(lines, start, end, pageNum){
-    // Liste verticale : ligne = nombre pur 0..359
-    // Accepté seulement si NON isolé (voisin immédiat aussi nombre pur)
+  function extractVerticalTripletNearKeyword(lines, i){
+    // Liste verticale : on prend uniquement des nombres "purs" 1..3 digits
+    // mais seulement si ils ne sont PAS isolés : il faut au moins un voisin numérique (au-dessus ou au-dessous)
+    const start = Math.max(0, i - KEY_BEFORE);
+    const end   = Math.min(lines.length - 1, i + KEY_AFTER);
+
+    const vals = [];
     for (let j = start; j <= end; j++) {
       const s = (lines[j] || "").trim();
       if (!/^\d{1,3}$/.test(s)) continue;
+      if (s.length > MAX_DIGITS) continue;
 
       const v = Number(s);
       if (!(v >= 0 && v <= 359)) continue;
@@ -699,118 +775,167 @@ function extractAzimuts(pages){
       const sPrev = (lines[j - 1] || "").trim();
       const sNext = (lines[j + 1] || "").trim();
 
-      const prevOk = /^\d{1,3}$/.test(sPrev) && Number(sPrev) >= 0 && Number(sPrev) <= 359;
-      const nextOk = /^\d{1,3}$/.test(sNext) && Number(sNext) >= 0 && Number(sNext) <= 359;
+      const prevOk = /^\d{1,3}$/.test(sPrev) && sPrev.length <= MAX_DIGITS && Number(sPrev) >= 0 && Number(sPrev) <= 359;
+      const nextOk = /^\d{1,3}$/.test(sNext) && sNext.length <= MAX_DIGITS && Number(sNext) >= 0 && Number(sNext) <= 359;
 
-      if (prevOk || nextOk) {
-        hits.push({ v: v, page: pageNum, snip: s });
+      if (prevOk || nextOk) vals.push(v);
+    }
+
+    // dédup + tri
+    const uniq = [];
+    for (const v of vals) if (!uniq.includes(v)) uniq.push(v);
+    uniq.sort((a,b)=>a-b);
+
+    // si on a 3 valeurs, on teste le triplet
+    if (uniq.length >= 3) {
+      // on peut avoir plus de 3, on teste toutes les combinaisons (petit N)
+      for (let a = 0; a < uniq.length; a++) {
+        for (let b = a + 1; b < uniq.length; b++) {
+          for (let c = b + 1; c < uniq.length; c++) {
+            const A = uniq[a], B = uniq[b], C = uniq[c];
+            if (validateTripletLoose(A,B,C)) return [A,B,C];
+          }
+        }
       }
     }
+
+    return null;
+  }
+
+  function scoreTriplet(a,b,c, symCount, contextText){
+    // score simple : priorité symboles + multiples de 10 + présence mot-clé fort
+    let s = 0;
+
+    // symboles "degré-like"
+    s += 5 * (symCount || 0);
+
+    // multiples de 10
+    if (a % 10 === 0) s += 2;
+    if (b % 10 === 0) s += 2;
+    if (c % 10 === 0) s += 2;
+
+    // multiples de 5
+    if (a % 5 === 0) s += 1;
+    if (b % 5 === 0) s += 1;
+    if (c % 5 === 0) s += 1;
+
+    // proximité métier : S1/S2/S3 explicite
+    if (contextText && STRONG_S123_RE.test(contextText)) s += 20;
+
+    // présence "Azimut(s)" classique
+    if (contextText && /\bazimut(s)?\b/i.test(contextText)) s += 8;
+
+    // pénalité si "MHz" présent (souvent tableau de fréquences)
+    // (pas éliminatoire : on pénalise légèrement)
+    if (contextText && /\bMHz\b/i.test(contextText)) s -= 3;
+
+    return s;
   }
 
   /* ================================
-     Parcours des pages
+     Collecte des candidats
      ================================ */
+  const candidates = [];
+
   for (const p of pages) {
 
-    const lines = norm(p.text).split("\n").map(s => s.trim());
+    const lines = norm(p.text).split("\n").map(s => (s || "").trim());
 
     for (let i = 0; i < lines.length; i++) {
 
       const line = lines[i];
       if (!line) continue;
+      if (!KEYWORDS_RE.test(line)) continue;
 
-      /* ================================
-         CAS 1 : mono-ligne robuste
-         ================================ */
-      const mono = line.match(/\bazimut\b\s*[:\-]?\s*(\d{1,3})\s*[°"]/i);
-      if (mono) {
-        const v = Number(mono[1]);
-        if (v >= 0 && v <= 359) {
-          hits.push({ v: v, page: p.page, snip: line });
-          continue;
-        }
-      }
+      // Bulles locales
+      const bubbles = makeBubbles(lines, i);
 
-      /* ================================
-         CAS 2 : en-tête Azimut(s)
-         ================================ */
-      if (/\bazimut(s)?\b/i.test(line)) {
+      for (const bub of bubbles) {
 
-        const start = Math.max(0, i - AZ_WINDOW_BEFORE);
-        const end   = Math.min(lines.length - 1, i + AZ_WINDOW_AFTER);
+        if (!bub) continue;
 
-        const chunkLines = lines.slice(start, end + 1);
-        const chunkText  = chunkLines.join(" ");
+        const angles = extractAnglesWithSymbol(bub);
+        const vals = angles.map(x => x.v);
+        if (vals.length < 2) continue;
 
-        // Anti-faux positifs fréquences
-        if (hasMHzNearby(chunkText)) continue;
+        // combinaisons de triplets dans la bulle
+        for (let a = 0; a < vals.length; a++) {
+          for (let b = a + 1; b < vals.length; b++) {
+            for (let c = b + 1; c < vals.length; c++) {
 
-        // 2a) Extraction "avec °" + cas "60/180°/300" (valeur nue seulement si ° détecté dans chunk)
-        const vals = extractAnglesFromText(chunkText);
-        for (const v of vals) hits.push({ v: v, page: p.page, snip: chunkText });
+              const A = vals[a], B = vals[b], C = vals[c];
+              if (!validateTripletLoose(A,B,C)) continue;
 
-        // 2b) Extraction liste verticale (valeurs nues non isolées)
-        pushVerticalBareAngles(lines, start, end, p.page);
-      }
-    }
-  }
+              // combien de valeurs ont un vrai symbole ° ou "
+              let symCount = 0;
+              for (const v of [A,B,C]) {
+                const meta = angles.find(x => x.v === v);
+                if (meta && meta.sym >= 2) symCount++;
+                else if (meta && meta.sym === 1) symCount += 0.5; // "*" : demi-qualité
+              }
 
-  /* ================================
-     Déduplication
-     ================================ */
-  const uniq = [];
-  for (const h of hits) {
-    if (!uniq.some(u => u.v === h.v)) uniq.push(h);
-  }
+              const tri = [A,B,C].slice().sort((x,y)=>x-y);
 
-  /* ================================
-     Sélection cohérente (liste)
-     ================================ */
-  uniq.sort((a,b) => a.v - b.v);
-
-  let best = [];
-  let bestScore = -1;
-
-  const vals = uniq.map(u => u.v);
-  const N = vals.length;
-
-  for (let a = 0; a < N; a++) {
-    for (let b = a; b < N; b++) {
-      for (let c = b; c < N; c++) {
-
-        const cand = Array.from(new Set([vals[a], vals[b], vals[c]]));
-        if (cand.length === 0) continue;
-
-        let ok = true;
-        let score = 0;
-
-        for (let i = 0; i < cand.length; i++) {
-          for (let j = i + 1; j < cand.length; j++) {
-            const d = circDist(cand[i], cand[j]);
-            if (d < MIN_ANGULAR_DIST) ok = false;
-            score += d;
+              candidates.push({
+                page: p.page,
+                tri: tri,
+                symCount: symCount,
+                context: bub,
+                score: scoreTriplet(tri[0],tri[1],tri[2], symCount, bub),
+                source: "bubble"
+              });
+            }
           }
         }
-
-        if (!ok) continue;
-
-        if (score > bestScore) {
-          bestScore = score;
-          best = cand.slice().sort((x,y) => x - y);
-        }
       }
+
+      // Liste verticale autour du mot-clé
+      const vt = extractVerticalTripletNearKeyword(lines, i);
+      if (vt) {
+        const tri = vt.slice().sort((x,y)=>x-y);
+        candidates.push({
+          page: p.page,
+          tri: tri,
+          symCount: 0,
+          context: lines.slice(Math.max(0,i-KEY_BEFORE), Math.min(lines.length, i+KEY_AFTER+1)).join(" "),
+          score: scoreTriplet(tri[0],tri[1],tri[2], 0, lines[i]),
+          source: "vertical"
+        });
+      }
+
+      // Cas mono-ligne "Antenne X : Azimut 120°" (robuste)
+      // Ici on ne cherche pas un triplet, mais on collecte des valeurs
+      // (elles seront assemblées par scoring via d'autres bulles)
+      // -> Rien à faire ici, car le triplet est géré au niveau bulle.
     }
   }
 
+  if (!candidates.length) {
+    return { list: [], trace: "" };
+  }
+
+  // Sélection meilleur candidat
+  candidates.sort((x,y) => {
+    if (y.score !== x.score) return y.score - x.score;
+    // tie-break : plus de symboles
+    if (y.symCount !== x.symCount) return y.symCount - x.symCount;
+    // tie-break : page plus tôt
+    return (x.page || 999) - (y.page || 999);
+  });
+
+  const best = candidates[0];
+
   return {
-    list: best,
-    trace: best.map(v => {
-      const src = uniq.find(u => u.v === v);
-      return src ? `p.${src.page}: ${v}°` : `${v}°`;
-    }).join("\n")
+    list: best.tri,
+    trace: [
+      `p.${best.page}: ${best.tri[0]}° / ${best.tri[1]}° / ${best.tri[2]}°`,
+      `source=${best.source}`,
+      `score=${best.score}`,
+      best.context ? `contexte=${best.context}` : ""
+    ].filter(Boolean).join("\n")
   };
 }
+
 
 
 
