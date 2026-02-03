@@ -722,7 +722,8 @@ function extractAzimuts(pages){
 
         if (hasMHzNearby(chunkText)) continue;
 
-        const allowBare = /\/|S1|S2|S3|\(/i.test(chunkText);
+        const allowBare = /\//.test(chunkText);
+
 
         const vals = extractAnglesFromText(chunkText, allowBare);
 
