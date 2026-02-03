@@ -262,7 +262,10 @@ async function ensurePdfJsModule(){
   window.pdfjsLib = pdfjs;
 
   // Worker local en module
-window.pdfjsLib.GlobalWorkerOptions.workerSrc = "./libs/pdfjs/pdf.worker.mjs";
+
+window.pdfjsLib.GlobalWorkerOptions.workerPort =
+  new Worker("./libs/pdfjs/pdf.worker.mjs", { type: "module" });
+
 
 
   return window.pdfjsLib;
@@ -726,13 +729,14 @@ async function runOcrOnPdf(arrayBuffer, maxPages){
   setProgress("PDF chargé : " + pdf.numPages + " page(s). OCR sur " + total + " page(s).");
 
 const worker = await Tesseract.createWorker({
+  logger: ocrLogger,
   workerPath: "./libs/tesseract/worker.min.js",
   corePath: "./libs/tesseract/tesseract-core.wasm.js",
   langPath: "./libs/tessdata"
 });
 
-await worker.loadLanguage(["fra"]);
-await worker.initialize(["fra"]);
+await worker.loadLanguage("fra");
+await worker.initialize("fra");
 
 
   const pages = [];
@@ -748,7 +752,8 @@ await worker.initialize(["fra"]);
     // OCR
     dbg("Page " + i + ": OCR");
 
-    const { data } = await worker.recognize(canvas, {}, { logger: ocrLogger });
+    const { data } = await worker.recognize(canvas);
+
   
     const text = normalizeOcrText(data && data.text ? data.text : "");
     pages.push({ page:i, text:text });
