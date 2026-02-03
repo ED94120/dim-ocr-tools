@@ -638,33 +638,31 @@ function extractAzimuts(pages) {
   for (const p of pages) {
     const t0 = (p.text || "");
 
-    // Normalisation locale légère (ne dépend pas de normalizeOcrText)
-    // - º -> °
-    // - O -> 0 uniquement si dans un motif numérique (plus bas on refait un replace global simple)
+    // Normalisation locale minimale
     const t = t0.replace(/º/g, "°");
 
-    // (A) Cas "ligne" : "Antenne X : Azimut 120°" (mot azimut juste avant)
-    // Accepte aussi "o" comme degré (OCR) : 120o
-    const reWord = /\bazimuts?\b[^0-9O]{0,20}([0-9O]{1,3})\s*(°|o)\b/gi;
+    // accepte : fin, espace, / ; , ) ] etc après le symbole de degré
+    const DEG_END = "(?=\\s|$|[\\/;,\\)\\]\\>])";
+
+    // (A) Cas "texte" : "Antenne X : Azimut 120°" ou "Azimuts ... 40°/220°/310°"
+    const reWord = new RegExp("\\bazimuts?\\b[\\s\\S]{0,80}?([0-9O]{1,3})\\s*(°|o)" + DEG_END, "gi");
     let m;
     while ((m = reWord.exec(t)) !== null) {
       const n = parseInt(m[1].replace(/O/g, "0"), 10);
       pushVal(n, p, "mot_azimut", m[0]);
     }
 
-    // (B) Cas "tableau" : on repère une ligne avec "Azimut" puis on scanne une fenêtre,
-    // MAIS on ne garde que les motifs qui portent un symbole de degré.
+    // (B) Cas "tableau" : repère une ligne avec "Azimut(s)" puis scanne une fenêtre,
+    // en ne prenant QUE les motifs "nombre + (° ou o)"
     const lines = t.split("\n").map(s => s.trim()).filter(Boolean);
 
     for (let i = 0; i < lines.length; i++) {
       if (/\bazimuts?\b/i.test(lines[i])) {
         const win = [];
-        for (let k = 0; k < 18; k++) win.push(lines[i + k] || "");
+        for (let k = 0; k < 22; k++) win.push(lines[i + k] || "");
         const chunk = win.join(" ");
 
-        // Important : on ne supprime PAS les "°"
-        // Extraction uniquement des motifs "nombre + °" (ou "o" OCR)
-        const reDeg = /([0-9O]{1,3})\s*(°|o)\b/g;
+        const reDeg = new RegExp("([0-9O]{1,3})\\s*(°|o)" + DEG_END, "g");
         let d;
         while ((d = reDeg.exec(chunk)) !== null) {
           const n = parseInt(d[1].replace(/O/g, "0"), 10);
@@ -678,8 +676,7 @@ function extractAzimuts(pages) {
   const uniq = [];
   for (const o of vals) if (!uniq.some(u => u.v === o.v)) uniq.push(o);
 
-  // Optionnel mais utile : on rejette les valeurs trop petites (1..9) car quasi jamais des azimuts
-  // (et ça évite les OCR "2°" parasites si jamais il en reste).
+  // Filtre anti-parasites (évite 1..9)
   const filtered = uniq.filter(o => o.v === 0 || o.v >= 10);
 
   // Tri
@@ -693,6 +690,7 @@ function extractAzimuts(pages) {
     trace: final.map(o => `p.${o.page}: ${o.v}° (${o.why})`).join("\n")
   };
 }
+
 
 
 
