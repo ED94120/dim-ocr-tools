@@ -246,7 +246,10 @@
 
     <details>
       <summary>Notes</summary>
-      <div class="mono muted">
+      <div class="mono muted" id="notesOcr">
+      V1 : extraction champs clés + traçabilité. OCR limité à 10 pages.
+      </div>
+
 V1 : extraction champs clés + traçabilité. OCR limité à 10 pages.
       </div>
     </details>
@@ -346,6 +349,13 @@ function clearAllFields(){
   setProgress("");
   setStatus("Prêt.", "ok");
 }
+
+function dumpFullOcrText(pages){
+  return pages
+    .map(p => `===== PAGE ${p.page} =====\n${p.text || ""}`)
+    .join("\n\n");
+}
+
 
 function selectBlock(blockId){
   const el = $(blockId);
@@ -1166,6 +1176,11 @@ if (!window.pdfjsLib || !window.Tesseract || !window.proj4) {
 
     const pages = await runOcrOnPdf(buf, maxPages);
     dbg("OCR OK: pages extraites = " + pages.length);
+
+    // Affiche tout le texte OCR brut dans Notes
+    const notesEl = $("notesOcr");
+    if (notesEl) notesEl.textContent = dumpFullOcrText(pages);
+
 
     // dump court page 3 si dispo
     const p3 = pages.find(p => p.page === 3);
