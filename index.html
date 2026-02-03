@@ -626,70 +626,113 @@ function haversineMeters(lat1, lon1, lat2, lon2){
   return 2*R*Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
 
-function extractAzimuts(pages) {
-  const vals = [];
+function extractAzimuts(pages){
+  const hits = [];
 
-  function pushVal(n, p, why, snip) {
-    if (Number.isFinite(n) && n >= 0 && n <= 359) {
-      vals.push({ v: n, page: p.page, why, snip });
+  for (const p of pages) {
+    const lines = (p.text || "")
+      .split("\n")
+      .map(s => (s || "").trim())
+      .filter(Boolean);
+
+    for (let i = 0; i < lines.length; i++) {
+      const L = lines[i];
+
+      // Déclencheur : on est dans une zone liée aux azimuts
+      if (/\bazimut(s)?\b/i.test(L)) {
+
+        // Fenêtre assez large : le tableau peut être vertical (120°\n210°\n300°)
+        const chunkLines = [];
+        for (let k = 0; k < 18; k++) chunkLines.push(lines[i + k] || "");
+        let chunk = chunkLines.join(" ");
+
+        // Normalisation OCR locale
+        chunk = chunk.replace(/º/g, "°");
+        chunk = chunk.replace(/[oO]/g, "0"); // OCR: O -> 0
+
+        // On extrait UNIQUEMENT des nombres suivis de °
+        const re = /(\d{1,3})\s*°/g;
+        let m;
+        while ((m = re.exec(chunk)) !== null) {
+          const n = Number(m[1]);
+          if (Number.isFinite(n) && n >= 0 && n <= 359) {
+            hits.push({ v: n, page: p.page, snip: chunk });
+          }
+        }
+      }
+    }
+
+    // Bonus : cas "Antenne X : Azimut 120°" (hors tableaux)
+    const pageTxt = (p.text || "").replace(/º/g, "°").replace(/[oO]/g, "0");
+    const re2 = /\bazimut\b\s*[:\-]?\s*(\d{1,3})\s*°/gi;
+    let m2;
+    while ((m2 = re2.exec(pageTxt)) !== null) {
+      const n = Number(m2[1]);
+      if (Number.isFinite(n) && n >= 0 && n <= 359) {
+        hits.push({ v: n, page: p.page, snip: pageTxt.slice(Math.max(0, m2.index - 40), m2.index + 40) });
+      }
     }
   }
 
-  for (const p of pages) {
-    const t0 = (p.text || "");
+  // Dédup + tri
+  const uniq = [];
+  for (const h of hits) if (!uniq.some(u => u.v === h.v)) uniq.push(h);
+  uniq.sort((a,b) => a.v - b.v);
 
-    // Normalisation locale minimale
-    const t = t0.replace(/º/g, "°");
+  // Sélection : max 3, en évitant de prendre des valeurs trop proches (tilts, etc.)
+  // On garde une règle souple : écart angulaire minimum 45° si possible.
+  function circDist(a, b){
+    const d = Math.abs(a - b) % 360;
+    return Math.min(d, 360 - d);
+  }
 
-    // accepte : fin, espace, / ; , ) ] etc après le symbole de degré
-    const DEG_END = "(?=\\s|$|[\\/;,\\)\\]\\>])";
+  let best = [];
+  let bestScore = -1;
 
-    // (A) Cas "texte" : "Antenne X : Azimut 120°" ou "Azimuts ... 40°/220°/310°"
-    const reWord = new RegExp("\\bazimuts?\\b[\\s\\S]{0,80}?([0-9O]{1,3})\\s*(°|o)" + DEG_END, "gi");
-    let m;
-    while ((m = reWord.exec(t)) !== null) {
-      const n = parseInt(m[1].replace(/O/g, "0"), 10);
-      pushVal(n, p, "mot_azimut", m[0]);
-    }
+  const vals = uniq.map(u => u.v);
 
-    // (B) Cas "tableau" : repère une ligne avec "Azimut(s)" puis scanne une fenêtre,
-    // en ne prenant QUE les motifs "nombre + (° ou o)"
-    const lines = t.split("\n").map(s => s.trim()).filter(Boolean);
+  // Brute force léger : on teste toutes les combinaisons jusqu’à 3 valeurs (la liste est courte)
+  const N = Math.min(vals.length, 20);
+  for (let a = 0; a < N; a++) {
+    for (let b = a; b < N; b++) {
+      for (let c = b; c < N; c++) {
+        const cand = Array.from(new Set([vals[a], vals[b], vals[c]])).slice(0,3);
+        if (cand.length === 0) continue;
 
-    for (let i = 0; i < lines.length; i++) {
-      if (/\bazimuts?\b/i.test(lines[i])) {
-        const win = [];
-        for (let k = 0; k < 22; k++) win.push(lines[i + k] || "");
-        const chunk = win.join(" ");
+        // Score = somme des distances (favorise des secteurs bien répartis)
+        let score = 0;
+        for (let i = 0; i < cand.length; i++) {
+          for (let j = i+1; j < cand.length; j++) {
+            score += circDist(cand[i], cand[j]);
+          }
+        }
 
-        const reDeg = new RegExp("([0-9O]{1,3})\\s*(°|o)" + DEG_END, "g");
-        let d;
-        while ((d = reDeg.exec(chunk)) !== null) {
-          const n = parseInt(d[1].replace(/O/g, "0"), 10);
-          pushVal(n, p, "table_deg", chunk);
+        // Pénalité si trop proches (typiquement confusion avec 6°/6°/6°)
+        let tooClose = false;
+        for (let i = 0; i < cand.length; i++) {
+          for (let j = i+1; j < cand.length; j++) {
+            if (circDist(cand[i], cand[j]) < 45) tooClose = true;
+          }
+        }
+        if (tooClose) score -= 1000;
+
+        if (score > bestScore) {
+          bestScore = score;
+          best = cand.slice().sort((x,y) => x - y);
         }
       }
     }
   }
 
-  // Dédup
-  const uniq = [];
-  for (const o of vals) if (!uniq.some(u => u.v === o.v)) uniq.push(o);
-
-  // Filtre anti-parasites (évite 1..9)
-  const filtered = uniq.filter(o => o.v === 0 || o.v >= 10);
-
-  // Tri
-  filtered.sort((a, b) => a.v - b.v);
-
-  // Au plus 3 valeurs
-  const final = filtered.slice(0, 3);
-
   return {
-    list: final.map(o => o.v),
-    trace: final.map(o => `p.${o.page}: ${o.v}° (${o.why})`).join("\n")
+    list: best,
+    trace: best.map(v => {
+      const src = uniq.find(u => u.v === v);
+      return src ? `p.${src.page}: ${v}°` : `${v}°`;
+    }).join("\n")
   };
 }
+
 
 
 
