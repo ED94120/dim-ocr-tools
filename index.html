@@ -662,10 +662,10 @@ function extractAzimuts(pages){
     return /\bMHz\b/i.test(text);
   }
 
-  function extractAnglesFromText(txt, allowBare){
+  function extractAnglesFromText(txt, allowBareSlash){
     const out = [];
 
-    // avec symbole degré ou guillemet
+    // 1) Valeurs explicites avec symbole degré ou guillemet
     let m;
     const reDeg = /(\d{1,3})\s*[°"]/g;
     while ((m = reDeg.exec(txt)) !== null) {
@@ -673,16 +673,40 @@ function extractAzimuts(pages){
       if (v >= 0 && v <= 359) out.push(v);
     }
 
-    // valeurs nues (sans °) autorisées uniquement en mode liste
-    if (allowBare) {
-      const reBare = /(?:^|[\/\s])(\d{1,3})(?=[\/\s]|$)/g;
-      while ((m = reBare.exec(txt)) !== null) {
+    // 2) Valeurs nues : UNIQUEMENT si elles sont suivies d'un "/" (ex: "60/180°/300")
+    //    => évite "Page 4 sur 21" (21 n'est pas suivi de "/")
+    if (allowBareSlash) {
+      const reBareSlash = /(\d{1,3})\s*(?=\/)/g;
+      while ((m = reBareSlash.exec(txt)) !== null) {
         const v = Number(m[1]);
         if (v >= 0 && v <= 359) out.push(v);
       }
     }
 
     return out;
+  }
+
+  function pushVerticalBareAngles(lines, start, end, pageNum){
+    // Liste verticale : ligne = nombre pur 0..359
+    // Accepté seulement si NON isolé (voisin immédiat aussi nombre pur)
+    for (let j = start; j <= end; j++) {
+      const s = (lines[j] || "").trim();
+      if (!/^\d{1,3}$/.test(s)) continue;
+
+      const v = Number(s);
+      if (!(v >= 0 && v <= 359)) continue;
+
+      const sPrev = (lines[j - 1] || "").trim();
+      const sNext = (lines[j + 1] || "").trim();
+
+      const prevOk = /^\d{1,3}$/.test(sPrev) && Number(sPrev) >= 0 && Number(sPrev) <= 359;
+      const nextOk = /^\d{1,3}$/.test(sNext) && Number(sNext) >= 0 && Number(sNext) <= 359;
+
+      // Non isolé => on accepte
+      if (prevOk || nextOk) {
+        hits.push({ v: v, page: pageNum, snip: s });
+      }
+    }
   }
 
   /* ================================
@@ -704,7 +728,7 @@ function extractAzimuts(pages){
       if (mono) {
         const v = Number(mono[1]);
         if (v >= 0 && v <= 359) {
-          hits.push({ v, page: p.page, snip: line });
+          hits.push({ v: v, page: p.page, snip: line });
           continue;
         }
       }
@@ -720,16 +744,19 @@ function extractAzimuts(pages){
         const chunkLines = lines.slice(start, end + 1);
         const chunkText  = chunkLines.join(" ");
 
+        // Anti-faux positifs fréquences
         if (hasMHzNearby(chunkText)) continue;
 
-        const allowBare = /\//.test(chunkText);
-
-
-        const vals = extractAnglesFromText(chunkText, allowBare);
+        // 2a) Extraction "avec °" + cas "60/180°/300" (valeur nue seulement si suivie de "/")
+        const allowBareSlash = /\//.test(chunkText);
+        const vals = extractAnglesFromText(chunkText, allowBareSlash);
 
         for (const v of vals) {
-          hits.push({ v, page: p.page, snip: chunkText });
+          hits.push({ v: v, page: p.page, snip: chunkText });
         }
+
+        // 2b) Extraction liste verticale (valeurs nues non isolées)
+        pushVerticalBareAngles(lines, start, end, p.page);
       }
     }
   }
@@ -758,7 +785,6 @@ function extractAzimuts(pages){
       for (let c = b; c < N; c++) {
 
         const cand = Array.from(new Set([vals[a], vals[b], vals[c]]));
-
         if (cand.length === 0) continue;
 
         let ok = true;
