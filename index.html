@@ -185,6 +185,7 @@
       <button id="copy_coord_src" class="btnCopy" type="button">Copier</button>
 
       <div class="fieldLabel">Écart DIM / calcul (m)</div>
+
       <input id="coord_delta" class="fieldVal" readonly />
       <button id="copy_coord_delta" class="btnCopy" type="button">Copier</button>
     </div>
@@ -628,44 +629,63 @@ function haversineMeters(lat1, lon1, lat2, lon2){
 function extractAzimuts(pages){
   const vals = [];
 
-  // 1) Priorité : repérer la zone "Azimuts" dans les tableaux (lignes proches)
   for (const p of pages) {
-    const lines = (p.text || "").split("\n").map(s => s.trim()).filter(Boolean);
+    const lines = (p.text || "")
+      .split("\n")
+      .map(s => s.trim())
+      .filter(Boolean);
 
     for (let i = 0; i < lines.length; i++) {
       const L = lines[i];
 
-      // ligne titre tableau
+      // Déclencheur : on est dans la zone du tableau "Azimuts"
       if (/\bazimuts?\b/i.test(L)) {
-        // on concatène la ligne + quelques lignes suivantes (cas vertical 60°\n180°\n300°)
-        const chunk = [L, lines[i+1]||"", lines[i+2]||"", lines[i+3]||"", lines[i+4]||""].join(" ");
 
-        // récupérer toutes les valeurs de type "60°" (tolère O/0)
-        const m = chunk.match(/([0-9O]{1,3})\s*°/g);
-        if (m) {
-          for (const tok of m) {
-            const nStr = tok.replace("°","").trim().replace(/O/g,"0");
-            const n = Number(nStr);
-            if (Number.isFinite(n) && n >= 0 && n <= 359) vals.push({ v:n, page:p.page, snip:chunk });
+        // Fenêtre plus large (l'OCR insère souvent des lignes vides)
+        const chunkLines = [];
+        for (let k = 0; k < 15; k++) chunkLines.push(lines[i + k] || "");
+        let chunk = chunkLines.join(" ");
+
+        // Normalisations locales
+        chunk = chunk.replace(/º/g, "°");
+
+        // On enlève les "3G/4G/5G" pour ne pas capter 3,4,5 comme azimuts
+        chunk = chunk.replace(/\b[2345]\s*G\b/gi, " ");
+
+        // On remplace les séparateurs usuels par des espaces
+        const s = chunk.replace(/[\/;,:|]/g, " ");
+
+        // Extraction large : nombres 0..359, avec O possible (6O)
+        const toks = s.match(/\b[0-9O]{1,3}\b/g) || [];
+
+        for (const tok of toks) {
+          const n = Number(tok.replace(/O/g, "0"));
+
+          // Filtre :
+          // - 0..359
+          // - on rejette les 1-chiffre (3,4,5...) sauf 0
+          if (Number.isFinite(n) && n >= 0 && n <= 359 && (n === 0 || n >= 10)) {
+            vals.push({ v:n, page:p.page, snip:chunk });
           }
         }
       }
     }
   }
 
-  // 2) Dédup + tri
+  // Dédup + tri
   const uniq = [];
   for (const o of vals) if (!uniq.some(u => u.v === o.v)) uniq.push(o);
   uniq.sort((a,b) => a.v - b.v);
 
-  // 3) Au plus 3 azimuts (S1/S2/S3)
+  // Au plus 3 secteurs
   const final = uniq.slice(0, 3);
 
   return {
     list: final.map(o => o.v),
-    trace: final.slice(0, 3).map(o => `p.${o.page}: ${o.v}°`).join("\n")
+    trace: final.map(o => `p.${o.page}: ${o.v}°`).join("\n")
   };
 }
+
 
 
 /* =========================================================
@@ -877,7 +897,8 @@ dbg("com=" + com.value + " (p." + com.page + ")");
   // 2) coord computation
   let latFromLam = NaN, lonFromLam = NaN;
   let latSrc = "";
-  let deltaM = "";
+  let coherenceTxt = "";   // texte affiché dans coord_delta
+
 
   // Lambert -> WGS
   if (Number.isFinite(xy.x) && Number.isFinite(xy.y)) {
@@ -894,24 +915,40 @@ dbg("com=" + com.value + " (p." + com.page + ")");
     latNum = ll.lat;
     lonNum = ll.lon;
     latSrc = "Fournies par le DIM";
-    // si aussi Lambert, comparer
+
     if (Number.isFinite(latFromLam) && Number.isFinite(lonFromLam)) {
       const d = haversineMeters(latNum, lonNum, latFromLam, lonFromLam);
-      deltaM = Math.round(d).toString();
-      if (d < 15) pillCoord("ok", "Coordonnées cohérentes (écart " + deltaM + " m)");
-      else if (d <= 50) pillCoord("warn", "Coordonnées à vérifier (écart " + deltaM + " m)");
-      else pillCoord("bad", "Incohérence probable (écart " + deltaM + " m)");
+
+      if (d <= 250) {
+        coherenceTxt = "Cohérent";
+        pillCoord("ok", "X,Y et latitude/longitude opérateur cohérents");
+      } else {
+        coherenceTxt = "Attention, pas cohérent";
+        pillCoord("bad", "Incohérence probable entre X,Y et latitude/longitude opérateur");
+      }
+
+      // debug optionnel
+      dbg("DEBUG cohérence d=" + Math.round(d) + " m");
     } else {
-      pillCoord("warn", "Lat/Lon DIM (Lambert non détecté)");
+      // lat/lon présentes mais pas de Lambert exploitable
+      coherenceTxt = "Lambert non détecté";
+      pillCoord("warn", "Latitude/longitude DIM détectées (Lambert non détecté)");
     }
+
   } else if (Number.isFinite(latFromLam) && Number.isFinite(lonFromLam)) {
+    // pas de lat/lon dans le DIM, mais Lambert -> lat/lon calculées
     latNum = latFromLam;
     lonNum = lonFromLam;
     latSrc = "Calculées depuis Lambert II étendu";
+
+    coherenceTxt = "Pas de lat, lon dans le DIM";
     pillCoord("warn", "Lat/Lon calculées depuis Lambert II étendu");
+
   } else {
+    coherenceTxt = "Coordonnées non détectées";
     pillCoord("bad", "Coordonnées non détectées");
   }
+
 
   // 3) Localisation via BAN
   const data = {
@@ -930,7 +967,7 @@ dbg("com=" + com.value + " (p." + com.page + ")");
     lat: Number.isFinite(latNum) ? formatDec(latNum, 7) : "",
     lon: Number.isFinite(lonNum) ? formatDec(lonNum, 7) : "",
     src: latSrc,
-    deltaM: deltaM,
+    deltaM: coherenceTxt,  // on réutilise le champ UI existant
     azList: az.list,
     azPretty: az.list.length ? az.list.join(" / ") : "",
     azCsv: az.list.length ? az.list.join(";") : ""
@@ -979,7 +1016,7 @@ dbg("com=" + com.value + " (p." + com.page + ")");
     latitude: data.lat,
     longitude: data.lon,
     latlon_source: data.src,
-    ecart_dim_calcul_m: data.deltaM,
+    coherence_dim_xy_latlon: data.deltaM,
     azimuts: data.azList
   };
   setVal("export_json", JSON.stringify(exportObj));
