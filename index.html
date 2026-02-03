@@ -51,7 +51,7 @@
 <body>
   <h2>Extraction DIM (OCR autonome) - V1</h2>
   <div class="small">
-    Déposez ici un PDF DIM (même scanné). L’OCR est limité à 10 pages. Les champs extraits sont regroupés par blocs, avec un bouton « Copier » pour chaque valeur.
+    Déposez un PDF DIM (même scanné). L’OCR est limité à 10 pages. Les champs extraits sont regroupés par blocs, avec un bouton « Copier » pour chaque valeur.
   </div>
 
   <div class="card" style="margin-top:14px;">
@@ -717,11 +717,11 @@ async function runOcrOnPdf(arrayBuffer, maxPages){
   setProgress("PDF chargé : " + pdf.numPages + " page(s). OCR sur " + total + " page(s).");
 
 const worker = await Tesseract.createWorker({
-  logger: ocrLogger,
   workerPath: "./libs/tesseract/worker.min.js",
   corePath: "./libs/tesseract/tesseract-core.wasm.js",
   langPath: "./libs/tessdata"
 });
+
 
 
 
@@ -742,7 +742,8 @@ const worker = await Tesseract.createWorker({
     // OCR
     dbg("Page " + i + ": OCR");
 
-    const { data } = await worker.recognize(canvas);
+    const { data } = await worker.recognize(canvas, {}, { logger: ocrLogger });
+
     const text = normalizeOcrText(data && data.text ? data.text : "");
     pages.push({ page:i, text:text });
 
