@@ -637,94 +637,141 @@ function haversineMeters(lat1, lon1, lat2, lon2){
 }
 
 function extractAzimuts(pages){
+
+  /* ================================
+     Paramètres (ajustables)
+     ================================ */
+  const AZ_WINDOW_BEFORE = 6;
+  const AZ_WINDOW_AFTER  = 40;
+  const MIN_ANGULAR_DIST = 80; // degrés
+
   const hits = [];
 
-  for (const p of pages) {
-    const lines = (p.text || "")
-      .split("\n")
-      .map(s => (s || "").trim())
-      .filter(Boolean);
-
-    for (let i = 0; i < lines.length; i++) {
-      const L = lines[i];
-
-      // Déclencheur : on est dans une zone liée aux azimuts
-      if (/\bazimut(s)?\b/i.test(L)) {
-
-        // Fenêtre assez large : le tableau peut être vertical (120°\n210°\n300°)
-        const chunkLines = [];
-        for (let k = 0; k < 18; k++) chunkLines.push(lines[i + k] || "");
-        let chunk = chunkLines.join(" ");
-
-        // Normalisation OCR locale
-        chunk = chunk.replace(/º/g, "°");
-        chunk = chunk.replace(/[oO]/g, "0"); // OCR: O -> 0
-
-        // On extrait UNIQUEMENT des nombres suivis de °
-        const re = /(\d{1,3})\s*°/g;
-        let m;
-        while ((m = re.exec(chunk)) !== null) {
-          const n = Number(m[1]);
-          if (Number.isFinite(n) && n >= 0 && n <= 359) {
-            hits.push({ v: n, page: p.page, snip: chunk });
-          }
-        }
-      }
-    }
-
-    // Bonus : cas "Antenne X : Azimut 120°" (hors tableaux)
-    const pageTxt = (p.text || "").replace(/º/g, "°").replace(/[oO]/g, "0");
-    const re2 = /\bazimut\b\s*[:\-]?\s*(\d{1,3})\s*°/gi;
-    let m2;
-    while ((m2 = re2.exec(pageTxt)) !== null) {
-      const n = Number(m2[1]);
-      if (Number.isFinite(n) && n >= 0 && n <= 359) {
-        hits.push({ v: n, page: p.page, snip: pageTxt.slice(Math.max(0, m2.index - 40), m2.index + 40) });
-      }
-    }
+  function norm(s){
+    return (s || "")
+      .replace(/º/g, "°")
+      .replace(/[oO]/g, "0");
   }
 
-  // Dédup + tri
-  const uniq = [];
-  for (const h of hits) if (!uniq.some(u => u.v === h.v)) uniq.push(h);
-  uniq.sort((a,b) => a.v - b.v);
-
-  // Sélection : max 3, en évitant de prendre des valeurs trop proches (tilts, etc.)
-  // On garde une règle souple : écart angulaire minimum 45° si possible.
   function circDist(a, b){
     const d = Math.abs(a - b) % 360;
     return Math.min(d, 360 - d);
   }
 
+  function hasMHzNearby(text){
+    return /\bMHz\b/i.test(text);
+  }
+
+  function extractAnglesFromText(txt, allowBare){
+    const out = [];
+
+    // avec symbole degré ou guillemet
+    let m;
+    const reDeg = /(\d{1,3})\s*[°"]/g;
+    while ((m = reDeg.exec(txt)) !== null) {
+      const v = Number(m[1]);
+      if (v >= 0 && v <= 359) out.push(v);
+    }
+
+    // valeurs nues (sans °) autorisées uniquement en mode liste
+    if (allowBare) {
+      const reBare = /(?:^|[\/\s])(\d{1,3})(?=[\/\s]|$)/g;
+      while ((m = reBare.exec(txt)) !== null) {
+        const v = Number(m[1]);
+        if (v >= 0 && v <= 359) out.push(v);
+      }
+    }
+
+    return out;
+  }
+
+  /* ================================
+     Parcours des pages
+     ================================ */
+  for (const p of pages) {
+
+    const lines = norm(p.text).split("\n").map(s => s.trim());
+
+    for (let i = 0; i < lines.length; i++) {
+
+      const line = lines[i];
+      if (!line) continue;
+
+      /* ================================
+         CAS 1 : mono-ligne robuste
+         ================================ */
+      const mono = line.match(/\bazimut\b\s*[:\-]?\s*(\d{1,3})\s*[°"]/i);
+      if (mono) {
+        const v = Number(mono[1]);
+        if (v >= 0 && v <= 359) {
+          hits.push({ v, page: p.page, snip: line });
+          continue;
+        }
+      }
+
+      /* ================================
+         CAS 2 : en-tête Azimut(s)
+         ================================ */
+      if (/\bazimut(s)?\b/i.test(line)) {
+
+        const start = Math.max(0, i - AZ_WINDOW_BEFORE);
+        const end   = Math.min(lines.length - 1, i + AZ_WINDOW_AFTER);
+
+        const chunkLines = lines.slice(start, end + 1);
+        const chunkText  = chunkLines.join(" ");
+
+        if (hasMHzNearby(chunkText)) continue;
+
+        const allowBare = /\/|S1|S2|S3|\(/i.test(chunkText);
+
+        const vals = extractAnglesFromText(chunkText, allowBare);
+
+        for (const v of vals) {
+          hits.push({ v, page: p.page, snip: chunkText });
+        }
+      }
+    }
+  }
+
+  /* ================================
+     Déduplication
+     ================================ */
+  const uniq = [];
+  for (const h of hits) {
+    if (!uniq.some(u => u.v === h.v)) uniq.push(h);
+  }
+
+  /* ================================
+     Sélection cohérente (liste)
+     ================================ */
+  uniq.sort((a,b) => a.v - b.v);
+
   let best = [];
   let bestScore = -1;
 
   const vals = uniq.map(u => u.v);
+  const N = vals.length;
 
-  // Brute force léger : on teste toutes les combinaisons jusqu’à 3 valeurs (la liste est courte)
-  const N = Math.min(vals.length, 20);
   for (let a = 0; a < N; a++) {
     for (let b = a; b < N; b++) {
       for (let c = b; c < N; c++) {
-        const cand = Array.from(new Set([vals[a], vals[b], vals[c]])).slice(0,3);
+
+        const cand = Array.from(new Set([vals[a], vals[b], vals[c]]));
+
         if (cand.length === 0) continue;
 
-        // Score = somme des distances (favorise des secteurs bien répartis)
+        let ok = true;
         let score = 0;
+
         for (let i = 0; i < cand.length; i++) {
-          for (let j = i+1; j < cand.length; j++) {
-            score += circDist(cand[i], cand[j]);
+          for (let j = i + 1; j < cand.length; j++) {
+            const d = circDist(cand[i], cand[j]);
+            if (d < MIN_ANGULAR_DIST) ok = false;
+            score += d;
           }
         }
 
-        // Pénalité si trop proches (typiquement confusion avec 6°/6°/6°)
-        let tooClose = false;
-        for (let i = 0; i < cand.length; i++) {
-          for (let j = i+1; j < cand.length; j++) {
-            if (circDist(cand[i], cand[j]) < 45) tooClose = true;
-          }
-        }
-        if (tooClose) score -= 1000;
+        if (!ok) continue;
 
         if (score > bestScore) {
           bestScore = score;
@@ -742,9 +789,6 @@ function extractAzimuts(pages){
     }).join("\n")
   };
 }
-
-
-
 
 
 
