@@ -1016,9 +1016,7 @@ function extractAzimuts(pages){
      ================================ */
 
   const KEYWORDS_RE = /\b(azimut|azimuts|az\b|secteur|s1|s2|s3|s\d[a-z]\d)\b/i;
-
   const DEGREE_RE   = /(\d{1,3})\s*[°"*]/g;
-
   const AZNUM_RE    = /\b(?:az(?:imut)?)\s*[:=]\s*(\d{1,3})\b/gi;
 
   const MIN_DIST = 80;     // séparation circulaire min
@@ -1060,7 +1058,13 @@ function extractAzimuts(pages){
 
     for (let i=0;i<lines.length;i++){
       const line = lines[i];
-      if (!line || !KEYWORDS_RE.test(line)) continue;
+      if (!line) continue;
+
+      // On accepte aussi les lignes "tableau" contenant déjà ≥3 angles en degrés
+      const degCount = (line.match(DEGREE_RE) || []).length;
+      const azCount  = (line.match(AZNUM_RE)  || []).length;
+
+      if (!KEYWORDS_RE.test(line) && (degCount + azCount) < 3) continue;
 
       // bulle locale (ligne seule + voisins)
       const bubble = [
@@ -1071,6 +1075,7 @@ function extractAzimuts(pages){
 
       const angles = [];
       let m;
+
       DEGREE_RE.lastIndex = 0;
       while ((m = DEGREE_RE.exec(bubble)) !== null){
         if (m[1].length > MAX_DIGITS) continue;
@@ -1078,7 +1083,7 @@ function extractAzimuts(pages){
         if (validAngle(v)) angles.push(v);
       }
 
-            AZNUM_RE.lastIndex = 0;
+      AZNUM_RE.lastIndex = 0;
       while ((m = AZNUM_RE.exec(bubble)) !== null){
         const v = Number(m[1]);
         if (validAngle(v)) angles.push(v);
@@ -1126,24 +1131,25 @@ function extractAzimuts(pages){
       const L1 = lines[i-1] || "";
       const L2 = lines[i+1] || "";
 
+      const zone = [L1,L0,L2].join(" ");
+
+      // On garde si mot-clé, ou si on voit déjà ≥3 angles dans la zone
+      const degCountZ = (zone.match(DEGREE_RE) || []).length;
+      const azCountZ  = (zone.match(AZNUM_RE)  || []).length;
+
       const hasKey =
         KEYWORDS_RE.test(L0) ||
         KEYWORDS_RE.test(L1) ||
         KEYWORDS_RE.test(L2);
 
-      if (!hasKey) continue;
-
-      const zone = [L1,L0,L2].join(" ");
+      if (!hasKey && (degCountZ + azCountZ) < 3) continue;
 
       let m;
+
+      // 1) angles avec symbole degré
       DEGREE_RE.lastIndex = 0;
       while ((m = DEGREE_RE.exec(zone)) !== null){
         if (m[1].length > MAX_DIGITS) continue;
-        const v = Number(m[1]);
-        if (!validAngle(v)) continue;
-
-      AZNUM_RE.lastIndex = 0;
-      while ((m = AZNUM_RE.exec(zone)) !== null){
         const v = Number(m[1]);
         if (!validAngle(v)) continue;
 
@@ -1154,6 +1160,11 @@ function extractAzimuts(pages){
         });
       }
 
+      // 2) angles type "Az: 220"
+      AZNUM_RE.lastIndex = 0;
+      while ((m = AZNUM_RE.exec(zone)) !== null){
+        const v = Number(m[1]);
+        if (!validAngle(v)) continue;
 
         singles.push({
           v,
@@ -1210,9 +1221,9 @@ function extractAzimuts(pages){
     }
   }
 
-
   return { list: [], trace: "" };
 }
+
 
 
 /* =========================================================
