@@ -495,16 +495,108 @@ function joinedText(pages){
 }
 
 function extractOperator(pages){
-  const t = joinedText(pages);
-  const m = t.match(/\bop[ée]rateur\b\s*[:\-]\s*([^\n]+)/i);
+  function joinFirstN(pgs, n){
+    const arr = [];
+    const k = Math.min(n, pgs.length);
+    for (let i = 0; i < k; i++){
+      arr.push(String(pgs[i] || ""));
+    }
+    return arr.join("\n");
+  }
+
+  function countMatches(text, rx){
+    const m = text.match(rx);
+    return m ? m.length : 0;
+  }
+
+  function proximityBonus(text, opWord){
+    // bonus si "projet" ou "operateur/opérateur" est à <= 5 mots de l'opérateur (avant ou après)
+    // On travaille en "mots" : \S+ (simple, efficace en OCR)
+    // Exemple : "Adresse du projet SFR" / "Opérateur : SFR"
+    const ctx = [
+      new RegExp(`\\bprojet\\b(?:\\s+\\S+){0,5}\\s+\\b${opWord}\\b`, "i"),
+      new RegExp(`\\b${opWord}\\b(?:\\s+\\S+){0,5}\\s+\\bprojet\\b`, "i"),
+      new RegExp(`\\bop[ée]rateur\\b(?:\\s+\\S+){0,5}\\s+\\b${opWord}\\b`, "i"),
+      new RegExp(`\\b${opWord}\\b(?:\\s+\\S+){0,5}\\s+\\bop[ée]rateur\\b`, "i")
+    ];
+    let bonus = 0;
+    for (let i = 0; i < ctx.length; i++){
+      if (ctx[i].test(text)) bonus += 5; // bonus par motif trouvé
+    }
+    return bonus;
+  }
+
+  const tAll = joinedText(pages);
+  const tFirst5 = joinFirstN(pages, 5);
+
+  // 1) Extraction explicite "Opérateur : XXX" si présente (très fiable)
+  const m = tAll.match(/\bop[ée]rateur\b\s*[:\-]\s*([^\n]+)/i);
   if (m) return { value: normSpaces(m[1]).toUpperCase(), page: null, snippet: m[0] };
-  // fallback marqueurs opérateurs
-  if (/\bfree\b/i.test(t)) return { value:"FREE MOBILE", page:null, snippet:"free" };
-  if (/\borange\b/i.test(t)) return { value:"ORANGE", page:null, snippet:"orange" };
-  if (/\bsfr\b/i.test(t)) return { value:"SFR", page:null, snippet:"sfr" };
-  if (/\bbouygues\b/i.test(t)) return { value:"BOUYGUES TELECOM", page:null, snippet:"bouygues" };
+
+  // 2) Vote global + bonus de proximité
+  const ops = [
+    { label: "SFR", word: "sfr", rx: /\bsfr\b/gi },
+    { label: "ORANGE", word: "orange", rx: /\borange\b/gi },
+    { label: "FREE MOBILE", word: "free", rx: /\bfree\b/gi },
+    { label: "BOUYGUES TELECOM", word: "bouygues", rx: /\bbouygues\b/gi }
+  ];
+
+  const scoresAll = [];
+  for (let i = 0; i < ops.length; i++){
+    const base = countMatches(tAll, ops[i].rx);
+    const bonus = proximityBonus(tAll, ops[i].word);
+    scoresAll.push({ i: i, label: ops[i].label, score: base + bonus, base: base, bonus: bonus });
+  }
+
+  // meilleur score global
+  let best = scoresAll[0];
+  for (let i = 1; i < scoresAll.length; i++){
+    if (scoresAll[i].score > best.score) best = scoresAll[i];
+  }
+
+  // vérifier égalité sur score global
+  let tied = [];
+  for (let i = 0; i < scoresAll.length; i++){
+    if (scoresAll[i].score === best.score && best.score > 0) tied.push(scoresAll[i]);
+  }
+
+  // 3) Si égalité, départage sur les 5 premières pages (avec bonus aussi)
+  if (tied.length > 1){
+    let best5 = tied[0];
+    for (let k = 0; k < tied.length; k++){
+      const op = ops[tied[k].i];
+      const base5 = countMatches(tFirst5, op.rx);
+      const bonus5 = proximityBonus(tFirst5, op.word);
+      const score5 = base5 + bonus5;
+
+      if (k === 0){
+        best5 = { i: tied[k].i, label: tied[k].label, score5: score5, base5: base5, bonus5: bonus5 };
+      } else if (score5 > best5.score5){
+        best5 = { i: tied[k].i, label: tied[k].label, score5: score5, base5: base5, bonus5: bonus5 };
+      }
+    }
+
+    if (best5.score5 > 0){
+      return {
+        value: best5.label,
+        page: null,
+        snippet: `tie-break first5: ${best5.label} (base=${best5.base5}, bonus=${best5.bonus5})`
+      };
+    }
+  }
+
+  // 4) Si un score global existe, on renvoie
+  if (best.score > 0){
+    return {
+      value: best.label,
+      page: null,
+      snippet: `global: ${best.label} (base=${best.base}, bonus=${best.bonus})`
+    };
+  }
+
   return { value:"", page:null, snippet:"" };
 }
+
 
 function extractDate(pages){
   const t = joinedText(pages);
