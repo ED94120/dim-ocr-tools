@@ -627,14 +627,23 @@ function extractSiteRef(pages){
 function extractAddressLine(pages){
   const t = joinedText(pages);
 
-  // ADRESSE DU SITE : 886, rue Roger Salengro
-  const m0 = t.match(/\badresse\s*(?:du\s*site)?\b\s*[:\-]\s*([^\n]+)/i);
-  if (m0) return { value: normSpaces(m0[1]), page:null, snippet:m0[0] };
+// 1) Adresse du projet / site (prioritaire)
+const m0 = t.match(/\badresse\s+du\s+(?:projet|site)\b[^\n:]{0,40}\s*[:\-]\s*([^\n]+)/i);
+if (m0) return { value: normSpaces(m0[1]), page:null, snippet:m0[0] };
 
-  // fallback : ligne contenant CP + commune
-  const m1 = t.match(/([0-9]{1,4}\s+[^\n]{3,}\s+\b\d{5}\b\s+[A-ZÀ-ÖØ-Ýa-zà-öø-ÿ'\- ]{3,})/);
-  if (m1) return { value: normSpaces(m1[1]), page:null, snippet:m1[0] };
+// 2) fallback : ligne contenant CP + commune, MAIS on exclut les adresses de contact (BP, CEDEX, etc.)
+const lines = t.split(/\r?\n/);
+for (let i = 0; i < lines.length; i++){
+  const line = normSpaces(lines[i]);
+  if (!line) continue;
 
+  // exclusions typiques contact
+  if (/\b(bp|cedex|direction|responsable|t[ée]l|mail|@|avenue jacques cartier)\b/i.test(line)) continue;
+
+  // CP + ville (souvent l'adresse site)
+  const m1 = line.match(/(\d{1,4}\s+.+\s+\b\d{5}\b\s+[A-ZÀ-ÖØ-Ýa-zà-öø-ÿ'\- ]{3,})/);
+  if (m1) return { value: normSpaces(m1[1]), page:null, snippet: line };
+  }
   return { value:"", page:null, snippet:"" };
 }
 
