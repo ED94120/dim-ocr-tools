@@ -652,6 +652,19 @@ function extractSiteRef(pages){
     };
   }
 
+  // 0bis) Cas Bouygues : "Nom du site : T52070"
+  const hitNomSite = findFirstRegex(
+    pages,
+    /\bnom\s+du\s+site\b\s*[:\-]\s*([A-Z0-9][A-Z0-9\-_/]{3,})/i
+  );
+  if (hitNomSite) {
+    return {
+      value: normSpaces(hitNomSite.match[1]),
+      page: hitNomSite.page,
+      snippet: hitNomSite.match[0]
+    };
+  }
+
   // 1) Cas générique "Code site :", "Code du site :"
   const hitCodeSite = findFirstRegex(
     pages,
@@ -678,8 +691,29 @@ function extractSiteRef(pages){
     };
   }
 
+  // 2bis) Bouygues (et autres) : "site T52070" sur une ligne, ou "site\nT52070"
+  // On exclut "site" suivi d'un mot commun (ex: "site décrit", "site internet", etc.) via une valeur courte alphanum.
+  const hitSiteWord = findFirstRegex(
+    pages,
+    /\bsite\b\s*[:\-]?\s*(?:\n\s*)?([A-Z0-9][A-Z0-9\-_/]{3,})\b/i
+  );
+  if (hitSiteWord) {
+    return {
+      value: normSpaces(hitSiteWord.match[1]),
+      page: hitSiteWord.page,
+      snippet: hitSiteWord.match[0]
+    };
+  }
+
   // 3) Fallback global : identifiant structuré fréquent dans les DIM
   const t = joinedText(pages);
+
+  // Priorite a un token type "T52070" (lettre + chiffres) si present
+  const mT = t.match(/\b[A-Z]\d{4,7}\b/);
+  if (mT) {
+    return { value: normSpaces(mT[0]), page: null, snippet: mT[0] };
+  }
+
   const m1 = t.match(/\b[A-Z0-9]{6,}(?:[-_\/]\d+|\s+\d{6,})\b/);
   if (m1) {
     return {
@@ -689,9 +723,9 @@ function extractSiteRef(pages){
     };
   }
 
-  // 4) Rien trouvé
   return { value:"", page:null, snippet:"" };
 }
+
 
 
 
