@@ -599,19 +599,42 @@ for (let i = 0; i < k; i++){
 }
 
 
-function extractDate(pages){
+function extractDate(pages, fileName){
   const t = joinedText(pages);
 
-  // priorité : DATE : 29/08/2023 (ou 29-08-2023)
+  // 1) Date numérique : 29/08/2023 (ou 29-08-2023)
   const m0 = t.match(/\bdate\b\s*[:\-]\s*(\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4})/i);
   if (m0) return { value: m0[1], page:null, snippet:m0[0] };
 
-  // fallback : première date plausible
   const m1 = t.match(/(\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4})/);
   if (m1) return { value: m1[1], page:null, snippet:m1[0] };
 
+  // 2) Date FR : "30 juin 2016"
+  const months = "(janvier|fevrier|février|mars|avril|mai|juin|juillet|aout|août|septembre|octobre|novembre|decembre|décembre)";
+  const reDayMonthYear = new RegExp("\\b(\\d{1,2})\\s+" + months + "\\s+(\\d{4})\\b", "i");
+  const m2 = t.match(reDayMonthYear);
+  if (m2) return { value: m2[1] + " " + m2[2] + " " + m2[3], page:null, snippet:m2[0] };
+
+  // 3) Mois + année : "novembre 2017" (ou "octobre-novembre 2017")
+  const reMonthYear = new RegExp("\\b" + months + "(?:\\s*[-/]+\\s*" + months + ")?\\s+(\\d{4})\\b", "i");
+  const m3 = t.match(reMonthYear);
+  if (m3){
+    // si c'est "octobre-novembre 2017", m3[0] contient tout
+    return { value: m3[0], page:null, snippet:m3[0] };
+  }
+
+  // 4) Fallback : nom de fichier (ex: "...-07-2017.pdf" ou "..._07-2017.pdf")
+  const fn = (fileName || "").toString();
+  const mf = fn.match(/(?:^|[^0-9])(\d{2})[\/\-. _](\d{4})(?:[^0-9]|$)/);
+  if (mf){
+    const mm = mf[1];
+    const yyyy = mf[2];
+    return { value: mm + "/" + yyyy, page:null, snippet:"filename: " + fn };
+  }
+
   return { value:"", page:null, snippet:"" };
 }
+
 
 function extractSiteRef(pages){
   const hit = findFirstRegex(pages, /\bcode\s*site\b\s*[:\-]\s*([A-Z0-9][A-Z0-9\-_/]{6,})/i);
@@ -1172,7 +1195,7 @@ async function parseAndFill(pages){
 
   // 1) extraction champs
   const op = extractOperator(pages);
-  const dt = extractDate(pages);
+  const dt = extractDate(pages, fileName);
   const sr = extractSiteRef(pages);
   const adr = extractAddressLine(pages);
   const xy = extractLambertXY(pages);
@@ -1428,7 +1451,8 @@ if (!window.pdfjsLib || !window.Tesseract || !window.proj4) {
     if (p3) dbg("Extrait p.3: " + (p3.text || "").slice(0, 200).replace(/\n/g, " | "));
 
     setStatus("Parsing des informations...", "ok");
-    await parseAndFill(pages);
+    await parseAndFill(pages, f.name);
+
 
     dbg("parseAndFill terminé.");
   } catch(e) {
