@@ -856,7 +856,9 @@ function extractAzimuts(pages){
   /* ================================
      Paramètres
      ================================ */
-  const KEYWORDS_RE = /\b(azimut|azimuts|az\b|secteur|s1|s2|s3)\b/i;
+
+  const KEYWORDS_RE = /\b(azimut|azimuts|az\b|secteur|s1|s2|s3|s\d[a-z]\d)\b/i;
+
   const DEGREE_RE   = /(\d{1,3})\s*[°"*]/g;
 
   const MIN_DIST = 80;     // séparation circulaire min
@@ -909,6 +911,7 @@ function extractAzimuts(pages){
 
       const angles = [];
       let m;
+      DEGREE_RE.lastIndex = 0;
       while ((m = DEGREE_RE.exec(bubble)) !== null){
         if (m[1].length > MAX_DIGITS) continue;
         const v = Number(m[1]);
@@ -967,6 +970,7 @@ function extractAzimuts(pages){
       const zone = [L1,L0,L2].join(" ");
 
       let m;
+      DEGREE_RE.lastIndex = 0;
       while ((m = DEGREE_RE.exec(zone)) !== null){
         if (m[1].length > MAX_DIGITS) continue;
         const v = Number(m[1]);
