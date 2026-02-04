@@ -1189,8 +1189,8 @@ function formatDec(n, dec){
   return n.toFixed(dec);
 }
 
-async function parseAndFill(pages){
-
+async function parseAndFill(pages, fileName){
+  fileName = (fileName || "").toString();
   dbg("parseAndFill() appelé. pages=" + (pages ? pages.length : 0));
 
   // 1) extraction champs
