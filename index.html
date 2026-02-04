@@ -498,9 +498,10 @@ function extractOperator(pages){
   function joinFirstN(pgs, n){
     const arr = [];
     const k = Math.min(n, pgs.length);
-    for (let i = 0; i < k; i++){
-      arr.push(String(pgs[i] || ""));
-    }
+for (let i = 0; i < k; i++){
+  arr.push(String((pgs[i] && pgs[i].text) ? pgs[i].text : ""));
+}
+
     return arr.join("\n");
   }
 
@@ -628,7 +629,8 @@ function extractAddressLine(pages){
   function joinFirstN(pgs, n){
     const arr = [];
     const k = Math.min(n, pgs.length);
-    for (let i = 0; i < k; i++) arr.push(String(pgs[i] || ""));
+    for (let i = 0; i < k; i++) arr.push(String((pgs[i] && pgs[i].text) ? pgs[i].text : ""));
+
     return arr.join("\n");
   }
 
@@ -1128,7 +1130,9 @@ async function fillLocationFromBAN(data){
       const feat = j.features && j.features[0];
       if (feat && feat.properties) {
         const props = feat.properties;
-        data.addrCarto = buildCartoradioAddressFromBAN(props) || data.addrCarto;
+        const banAddr = buildCartoradioAddressFromBAN(props);
+        if (!data.addrCarto || !data.addrCarto.trim()) data.addrCarto = banAddr;
+
         data.city = props.city || data.city;
         const ctx = parseContextDeptRegion(props.context || "");
         data.dept = ctx.dept || data.dept;
@@ -1145,7 +1149,8 @@ async function fillLocationFromBAN(data){
       const feat = j.features && j.features[0];
       if (feat && feat.properties) {
         const props = feat.properties;
-        data.addrCarto = buildCartoradioAddressFromBAN(props) || data.addrCarto;
+        const banAddr = buildCartoradioAddressFromBAN(props);
+        if (!data.addrCarto || !data.addrCarto.trim()) data.addrCarto = banAddr;
         data.city = props.city || data.city;
         const ctx = parseContextDeptRegion(props.context || "");
         data.dept = ctx.dept || data.dept;
@@ -1179,7 +1184,8 @@ dbg("op=" + op.value + " (p." + op.page + ")");
 dbg("dt=" + dt.value + " (p." + dt.page + ")");
 dbg("sr=" + sr.value + " (p." + sr.page + ")");
 dbg("adr=" + adr.value + " (p." + adr.page + ")");
-dbg("com=" + com.value + " (p." + com.page + ")");
+dbg("com=" + com.city + " " + com.cp + " (p." + com.page + ")");
+
 
 
 
