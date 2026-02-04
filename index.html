@@ -687,11 +687,24 @@ function extractAddressLine(pages){
     return { value: v, page: null, snippet: m0b[0] };
   }
 
+    // 2bis) Cas Orange : "Adresse du site" (souvent sans ":" et avec "Nom du site" / "Code du site" sur les mêmes lignes)
+  const mSite = tAll.match(
+    /\badresse\s+du\s+site\b[\s\S]{0,120}?\n\s*([^\n]+?)\s+(?:nom\s+du\s+site|nos\s+r[ée]f[ée]rences)\b[\s\S]{0,120}?\n\s*(\d{5}\s+[A-ZÀ-ÖØ-Ýa-zà-öø-ÿ'\- ]{3,})(?:\s+\bcode\s+du\s+site\b|[^\n]*)/i
+  );
+  if (mSite){
+    const v = normSpaces(mSite[1] + " " + mSite[2]);
+    return { value: v, page: null, snippet: "Adresse du site (bloc dédié)" };
+  }
+
   // 3) Fallback contrôlé : on ne cherche QUE dans les 5 premières pages
   // et on exige un type de voie sur la même ligne
   const lines = t5.split(/\r?\n/);
   for (let i = 0; i < lines.length; i++){
     const line = normSpaces(lines[i]);
+        // Exclure les pieds de page / en-têtes qui polluent l'adresse
+    if (/^page\s*\d+\b/i.test(line)) continue;
+    if (/\bdossier\s+d'information\b/i.test(line)) continue;
+
     if (!line) continue;
 
     // Exclusions typiques contact / siège
