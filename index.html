@@ -464,7 +464,8 @@ function normalizeOcrText(s){
     // OCR fréquent : "6O°" au lieu de "60°"
   t = t.replace(/([0-9])O(?=°)/g, "$10");
   t = t.replace(/O(?=°)/g, "0");
-  
+    // Codes postaux OCR : "84 460" -> "84460"
+  t = t.replace(/\b(\d{2})\s+(\d{3})\b/g, "$1$2");
 
   return t;
 }
@@ -776,6 +777,13 @@ function extractAddressLine(pages){
   );
   if (mLast) return { value: normSpaces(mLast[1]), page: null, snippet: mLast[0] };
 
+    // 3bis) Fallback "Lieu-dit ..." (souvent sans type de voie, ex: "Lieu-dit l'église — 84460 CHEVAL-BLANC")
+  const mLieuDit = t5.match(/\blieu-dit\b\s+([^\n]+?)\s*[-—]\s*(\d{5})\s+([A-ZÀ-ÖØ-Ýa-zà-öø-ÿ'\- ]{3,})/i);
+  if (mLieuDit){
+    const v = normSpaces("Lieu-dit " + mLieuDit[1] + " " + mLieuDit[2] + " " + mLieuDit[3]);
+    return { value: v, page: null, snippet: mLieuDit[0] };
+  }
+
   return { value:"", page:null, snippet:"" };
 }
 
@@ -1011,6 +1019,8 @@ function extractAzimuts(pages){
 
   const DEGREE_RE   = /(\d{1,3})\s*[°"*]/g;
 
+  const AZNUM_RE    = /\b(?:az(?:imut)?)\s*[:=]\s*(\d{1,3})\b/gi;
+
   const MIN_DIST = 80;     // séparation circulaire min
   const MAX_DIGITS = 3;
 
@@ -1064,6 +1074,12 @@ function extractAzimuts(pages){
       DEGREE_RE.lastIndex = 0;
       while ((m = DEGREE_RE.exec(bubble)) !== null){
         if (m[1].length > MAX_DIGITS) continue;
+        const v = Number(m[1]);
+        if (validAngle(v)) angles.push(v);
+      }
+
+            AZNUM_RE.lastIndex = 0;
+      while ((m = AZNUM_RE.exec(bubble)) !== null){
         const v = Number(m[1]);
         if (validAngle(v)) angles.push(v);
       }
@@ -1126,6 +1142,19 @@ function extractAzimuts(pages){
         const v = Number(m[1]);
         if (!validAngle(v)) continue;
 
+      AZNUM_RE.lastIndex = 0;
+      while ((m = AZNUM_RE.exec(zone)) !== null){
+        const v = Number(m[1]);
+        if (!validAngle(v)) continue;
+
+        singles.push({
+          v,
+          page: p.page,
+          context: zone
+        });
+      }
+
+
         singles.push({
           v,
           page: p.page,
@@ -1163,11 +1192,27 @@ function extractAzimuts(pages){
     }
   }
 
+  // Si seulement 2 azimuts distincts plausibles, on renvoie le doublet (cas OCR incomplet)
+  if (uniqVals.length >= 2){
+    for (let a=0;a<uniqVals.length;a++){
+      for (let b=a+1;b<uniqVals.length;b++){
+        const A = uniqVals[a].v;
+        const B = uniqVals[b].v;
+        if (A !== B && circDist(A,B) >= MIN_DIST){
+          const duo = [A,B].sort((x,y)=>x-y);
+          return {
+            list: duo,
+            trace: `doublet (OCR incomplet)\n` +
+                   `p.${uniqVals[a].page}/${uniqVals[b].page}: ${duo.join("° / ")}°`
+          };
+        }
+      }
+    }
+  }
+
+
   return { list: [], trace: "" };
 }
-
-
-
 
 
 /* =========================================================
