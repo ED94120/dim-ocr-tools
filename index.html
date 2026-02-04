@@ -700,7 +700,6 @@ function extractAddressLine(pages){
     const arr = [];
     const k = Math.min(n, pgs.length);
     for (let i = 0; i < k; i++) arr.push(String((pgs[i] && pgs[i].text) ? pgs[i].text : ""));
-
     return arr.join("\n");
   }
 
@@ -710,37 +709,88 @@ function extractAddressLine(pages){
   // Types de voie (pour éviter de capturer des lignes "Commune : 35000 RENNES" ou des faux positifs)
   const rxVoie = /\b(rue|avenue|av\.|boulevard|bd|bld|chemin|impasse|place|route|all[ée]e|quai|cours|square|passage|sentier|voie)\b/i;
 
-  // 1) Adresse du projet / site (prioritaire) : accepte que ":" soit sur la ligne suivante
-  // Exemples gérés :
-  // "Adresse du projet SFR : 1, rue Jules Lebrun"
-  // "Adresse du site : ..."
-  // "Adresse du projet SFR\n: 1, rue ..."
+  // Heuristique : une ligne "ressemble" à une adresse si elle contient un numéro OU un type de voie OU un CP
+  function looksLikeAddress(s){
+    const v = normSpaces(s || "");
+    if (!v) return false;
+    if (/\b\d{5}\b/.test(v)) return true;
+    if (rxVoie.test(v)) return true;
+    if (/\b\d{1,4}\b/.test(v)) return true;
+    return false;
+  }
+
+  // Nettoyage léger des fins de ligne OCRisées (ex: "Mar", "ape", etc.) sans être trop agressif
+  function cleanupTail(s){
+    let v = normSpaces(s || "");
+    v = v.replace(/\s+\b(?:mar|ape)\b\.?$/i, "").trim();
+    return v;
+  }
+
+  // 1) Adresse du projet / site (prioritaire)
+  // Correction clé : on capture la ligne après ":" + éventuellement 2 lignes suivantes,
+  // puis on choisit la meilleure (si la 1ère est du bruit OCR).
   const m0 = t5.match(
-    /\badresse\s+du\s+(?:projet|site)\b[^\n:]{0,60}\s*(?:[:\-]\s*|\n\s*[:\-]\s*)([^\n]+)/i
+    /\badresse\s+du\s+(?:projet|site)\b[^\n:]{0,60}\s*(?:[:\-]\s*|\n\s*[:\-]\s*)([^\n]+)(?:\n\s*([^\n]+))?(?:\n\s*([^\n]+))?/i
   );
   if (m0){
-    const v = normSpaces(m0[1]);
-    if (rxVoie.test(v)) return { value: v, page: null, snippet: m0[0] };
-    // Même si l'OCR a mangé "rue/avenue", on retourne quand même car c'est un label "Adresse du projet"
-    return { value: v, page: null, snippet: m0[0] };
+    const l1 = cleanupTail(m0[1] || "");
+    const l2 = cleanupTail(m0[2] || "");
+    const l3 = cleanupTail(m0[3] || "");
+
+    let v = l1;
+
+    // Si l1 est du bruit (ne ressemble pas à une adresse) et l2 oui -> prendre l2
+    if (!looksLikeAddress(l1) && looksLikeAddress(l2)) v = l2;
+
+    // Si l1 ressemble à une adresse mais sans CP/ville, et l2 apporte CP/ville -> concat
+    if (looksLikeAddress(v) && l2 && looksLikeAddress(l2)){
+      const hasCPv = /\b\d{5}\b/.test(v);
+      const hasCP2 = /\b\d{5}\b/.test(l2);
+      if (!hasCPv && hasCP2) v = cleanupTail(v + " " + l2);
+    }
+
+    // Idem avec l3 si elle complète (souvent CP/ville ou complément)
+    if (looksLikeAddress(v) && l3 && looksLikeAddress(l3)){
+      const hasCPv = /\b\d{5}\b/.test(v);
+      const hasCP3 = /\b\d{5}\b/.test(l3);
+      if (!hasCPv && hasCP3) v = cleanupTail(v + " " + l3);
+    }
+
+    return { value: normSpaces(v), page: null, snippet: m0[0] };
   }
 
-  // 2) Variante : "Adresse du projet SFR" peut être OCRisée sans "du"
+  // 2) Variante : "Adresse projet/site" (OCR sans "du")
   const m0b = t5.match(
-    /\badresse\s+(?:projet|site)\b[^\n:]{0,60}\s*(?:[:\-]\s*|\n\s*[:\-]\s*)([^\n]+)/i
+    /\badresse\s+(?:projet|site)\b[^\n:]{0,60}\s*(?:[:\-]\s*|\n\s*[:\-]\s*)([^\n]+)(?:\n\s*([^\n]+))?(?:\n\s*([^\n]+))?/i
   );
   if (m0b){
-    const v = normSpaces(m0b[1]);
-    return { value: v, page: null, snippet: m0b[0] };
+    const l1 = cleanupTail(m0b[1] || "");
+    const l2 = cleanupTail(m0b[2] || "");
+    const l3 = cleanupTail(m0b[3] || "");
+
+    let v = l1;
+    if (!looksLikeAddress(l1) && looksLikeAddress(l2)) v = l2;
+
+    if (looksLikeAddress(v) && l2 && looksLikeAddress(l2)){
+      const hasCPv = /\b\d{5}\b/.test(v);
+      const hasCP2 = /\b\d{5}\b/.test(l2);
+      if (!hasCPv && hasCP2) v = cleanupTail(v + " " + l2);
+    }
+    if (looksLikeAddress(v) && l3 && looksLikeAddress(l3)){
+      const hasCPv = /\b\d{5}\b/.test(v);
+      const hasCP3 = /\b\d{5}\b/.test(l3);
+      if (!hasCPv && hasCP3) v = cleanupTail(v + " " + l3);
+    }
+
+    return { value: normSpaces(v), page: null, snippet: m0b[0] };
   }
 
-    // 2bis) Cas Orange : "Adresse du site" (souvent sans ":" et avec "Nom du site" / "Code du site" sur les mêmes lignes)
+  // 2bis) Cas Orange : "Adresse du site" (souvent sans ":" et avec "Nom du site" / "Code du site" sur les mêmes lignes)
   const mSite = tAll.match(
     /\badresse\s+du\s+site\b[\s\S]{0,120}?\n\s*([^\n]+?)\s+(?:nom\s+du\s+site|nos\s+r[ée]f[ée]rences)\b[\s\S]{0,120}?\n\s*(\d{5}\s+[A-ZÀ-ÖØ-Ýa-zà-öø-ÿ'\- ]{3,})(?:\s+\bcode\s+du\s+site\b|[^\n]*)/i
   );
   if (mSite){
     const v = normSpaces((mSite[1] + " " + mSite[2]).replace(/\b(code\s+du\s+site|nom\s+du\s+site|nos\s+r[ée]f[ée]rences)\b[\s\S]*$/i, "").trim());
-
     return { value: v, page: null, snippet: "Adresse du site (bloc dédié)" };
   }
 
@@ -749,7 +799,8 @@ function extractAddressLine(pages){
   const lines = t5.split(/\r?\n/);
   for (let i = 0; i < lines.length; i++){
     const line = normSpaces(lines[i]);
-        // Exclure les pieds de page / en-têtes qui polluent l'adresse
+
+    // Exclure les pieds de page / en-têtes qui polluent l'adresse
     if (/^page\s*\d+\b/i.test(line)) continue;
     if (/\bdossier\s+d'information\b/i.test(line)) continue;
 
@@ -761,23 +812,42 @@ function extractAddressLine(pages){
     // On exige une voie (rue/avenue/etc.) pour être une adresse plausible
     if (!rxVoie.test(line)) continue;
 
-    // Cas où CP + ville sont sur la même ligne (parfois)
+    // Cas où CP + ville sont sur la même ligne
     const m1 = line.match(/(\d{1,4}\s+.+\s+\b\d{5}\b\s+[A-ZÀ-ÖØ-Ýa-zà-öø-ÿ'\- ]{3,})/);
-    if (m1) return { value: normSpaces(m1[1]), page: null, snippet: line };
+    if (m1) return { value: cleanupTail(m1[1]), page: null, snippet: line };
 
-    // Cas où l'adresse ligne est seule (sans CP/ville), on la garde quand même
+    // Cas où l'adresse ligne est seule (sans CP/ville)
     const m2 = line.match(/(\d{1,4}\s+.+)/);
-    if (m2) return { value: normSpaces(m2[1]), page: null, snippet: line };
+    if (m2) return { value: cleanupTail(m2[1]), page: null, snippet: line };
   }
 
   // 4) Ultime secours (sur tout le doc) : uniquement si on trouve un libellé "Adresse du projet/site"
-  // (ça évite de ramasser une adresse de contact plus loin)
   const mLast = tAll.match(
-    /\badresse\s+du\s+(?:projet|site)\b[^\n:]{0,60}\s*(?:[:\-]\s*|\n\s*[:\-]\s*)([^\n]+)/i
+    /\badresse\s+du\s+(?:projet|site)\b[^\n:]{0,60}\s*(?:[:\-]\s*|\n\s*[:\-]\s*)([^\n]+)(?:\n\s*([^\n]+))?(?:\n\s*([^\n]+))?/i
   );
-  if (mLast) return { value: normSpaces(mLast[1]), page: null, snippet: mLast[0] };
+  if (mLast){
+    const l1 = cleanupTail(mLast[1] || "");
+    const l2 = cleanupTail(mLast[2] || "");
+    const l3 = cleanupTail(mLast[3] || "");
 
-    // 3bis) Fallback "Lieu-dit ..." (souvent sans type de voie, ex: "Lieu-dit l'église — 84460 CHEVAL-BLANC")
+    let v = l1;
+    if (!looksLikeAddress(l1) && looksLikeAddress(l2)) v = l2;
+
+    if (looksLikeAddress(v) && l2 && looksLikeAddress(l2)){
+      const hasCPv = /\b\d{5}\b/.test(v);
+      const hasCP2 = /\b\d{5}\b/.test(l2);
+      if (!hasCPv && hasCP2) v = cleanupTail(v + " " + l2);
+    }
+    if (looksLikeAddress(v) && l3 && looksLikeAddress(l3)){
+      const hasCPv = /\b\d{5}\b/.test(v);
+      const hasCP3 = /\b\d{5}\b/.test(l3);
+      if (!hasCPv && hasCP3) v = cleanupTail(v + " " + l3);
+    }
+
+    return { value: normSpaces(v), page: null, snippet: mLast[0] };
+  }
+
+  // 3bis) Fallback "Lieu-dit ..." (souvent sans type de voie)
   const mLieuDit = t5.match(/\blieu-dit\b\s+([^\n]+?)\s*[-—]\s*(\d{5})\s+([A-ZÀ-ÖØ-Ýa-zà-öø-ÿ'\- ]{3,})/i);
   if (mLieuDit){
     const v = normSpaces("Lieu-dit " + mLieuDit[1] + " " + mLieuDit[2] + " " + mLieuDit[3]);
@@ -786,6 +856,7 @@ function extractAddressLine(pages){
 
   return { value:"", page:null, snippet:"" };
 }
+
 
 
 function extractCommune(pages){
