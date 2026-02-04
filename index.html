@@ -692,7 +692,8 @@ function extractAddressLine(pages){
     /\badresse\s+du\s+site\b[\s\S]{0,120}?\n\s*([^\n]+?)\s+(?:nom\s+du\s+site|nos\s+r[ée]f[ée]rences)\b[\s\S]{0,120}?\n\s*(\d{5}\s+[A-ZÀ-ÖØ-Ýa-zà-öø-ÿ'\- ]{3,})(?:\s+\bcode\s+du\s+site\b|[^\n]*)/i
   );
   if (mSite){
-    const v = normSpaces(mSite[1] + " " + mSite[2]);
+    const v = normSpaces((mSite[1] + " " + mSite[2]).replace(/\b(code\s+du\s+site|nom\s+du\s+site|nos\s+r[ée]f[ée]rences)\b[\s\S]*$/i, "").trim());
+
     return { value: v, page: null, snippet: "Adresse du site (bloc dédié)" };
   }
 
